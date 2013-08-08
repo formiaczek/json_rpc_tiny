@@ -31,42 +31,34 @@
 #define JSON_RPC_TINY
 
 /* Exported defines ------------------------------------------------------------*/
-#define TINY_RPC_MAX_NUM_HANDLERS      16
-#define TINY_RPC_MAX_FCN_NAME_LEN      16
-#define TINY_RPC_MAX_RESPONSE_BUF_LEN  64
-
-#ifndef RPC_VER
-#define RPC_VER 2
-#endif
-
 
 #include <stdint.h>
 /* Exported types ------------------------------------------------------------*/
+
+typedef struct json_rpc_request_data
+{
+    const char* request;
+    char*       response;
+    int         request_len;
+    int         response_len;
+    void*       arg;
+} json_rpc_request_data_t;
+
+enum request_info_flags
+{
+    rpc_request_is_notification = 1,
+    rpc_request_is_rpc_20 = 2
+};
+
 typedef struct rpc_request_info
 {
     int params_start;
     int params_len;
-    int is_notification;
     int id_start;
+    unsigned int info_flags; // TODO: add param to be passed to handlers ?
+    json_rpc_request_data_t* data;
 } rpc_request_info_t;
 
-typedef struct json_rpc_error_code
-{
-    const char* error_code;
-    const char* error_msg;
-} json_rpc_error_code_t;
-
-
-extern json_rpc_error_code_t json_rpc_err_codes[];
-
-enum json_rpc_errors
-{
-    json_rpc_parse_error = 0,       /* An error occurred on the server while parsing the JSON text */
-    json_rpc_invalid_request,       /* The JSON sent is not a valid Request object */
-    json_rpc_method_not_found,      /* The method does not exist / is not available */
-    json_rpc_invalid_params,        /* Invalid method parameter(s) */
-    json_rpc_internal_error,        /* Internal JSON-RPC error */
-};
 
 /**
  * @brief  Definition of a handler type for RPC handlers.
@@ -78,15 +70,38 @@ enum json_rpc_errors
  *          those parameters as appropriate.
  * @return pointer to the JSON-RPC complaint response (if 'id' is > 0): request, or NULL (if id < 0): notification
  */
-typedef char* (*json_rpc_handler_fcn)(const char* rpc_request, rpc_request_info_t* info);
+typedef char* (*json_rpc_handler_fcn)(rpc_request_info_t* info);
+
+typedef struct json_rpc_handler
+{
+    json_rpc_handler_fcn handler;
+    const char* fcn_name;
+} json_rpc_handler_t;
+
+typedef struct json_rpc_instance
+{
+    json_rpc_handler_t* handlers;
+    int num_of_handlers;
+    int max_num_of_handlers;
+} json_rpc_instance_t;
+
+
+enum json_rpc_20_errors
+{
+    json_rpc_err_parse_error = 0,       /* An error occurred on the server while parsing the JSON text */
+    json_rpc_err_invalid_request,       /* The JSON sent is not a valid Request object */
+    json_rpc_err_method_not_found,      /* The method does not exist / is not available */
+    json_rpc_err_invalid_params,        /* Invalid method parameter(s) */
+    json_rpc_err_internal_error,        /* Internal JSON-RPC error */
+};
 
 
 /* Exported functions ------------------------------------------------------- */
-void json_rpc_init();
-void json_rpc_register_handler(const char* fcn_name, json_rpc_handler_fcn handler);
-char* json_rpc_exec(const char* input, int input_len);
-char* json_rpc_result(const char* result_str, const char* rpc_request, rpc_request_info_t* info);
-char* json_rpc_error(int err_code, const char* rpc_request, rpc_request_info_t* info);
-
+void json_rpc_init(json_rpc_instance_t* self, json_rpc_handler_t* table_for_handlers, int max_num_of_handlers);
+void json_rpc_register_handler(json_rpc_instance_t* self, const char* fcn_name, json_rpc_handler_fcn handler);
+char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_request_data_t* request_data);
+char* json_rpc_result(const char* result_str, rpc_request_info_t* info);
+char* json_rpc_error(int err_code, rpc_request_info_t* info);
+char* json_rpc_error(const char* err_msg, rpc_request_info_t* info);
 
 #endif /* JSON_RPC_TINY */

@@ -36,7 +36,17 @@
 
 /* Private types and definitions ------------------------------------------------------- */
 
-static const char* response_prefix = "{\"jsonrpc\": \"2.0\", ";
+static const char* response_1x_prefix = "{";
+static const char* response_20_prefix = "{\"jsonrpc\": \"2.0\", ";
+
+typedef struct json_rpc_error_code
+{
+    const char* error_code;
+    const char* error_msg;
+} json_rpc_error_code_t;
+
+
+extern json_rpc_error_code_t json_rpc_err_codes[];
 
 json_rpc_error_code_t json_rpc_err_codes[] =
 {
@@ -47,15 +57,6 @@ json_rpc_error_code_t json_rpc_err_codes[] =
     {"-32603", "Internal error"  }    /* Internal JSON-RPC error */
 };
 
-typedef struct
-{
-    json_rpc_handler_fcn handler;
-    const char* fcn_name;
-} handler_t;
-
-static handler_t handlers[TINY_RPC_MAX_NUM_HANDLERS];
-static int number_of_handlers = 0;
-
 typedef struct rpc_token_info
 {
     int16_t obj_name_start;
@@ -64,7 +65,7 @@ typedef struct rpc_token_info
     int16_t values_end;
 } rpc_token_info_t;
 
-static handler_t obj_names[] =
+static json_rpc_handler_t obj_names[] =
 {
     {0, "jsonrpc"},
     {0, "method"},
@@ -82,82 +83,93 @@ enum obj_name_ids
 
 static const int num_of_obj_names = sizeof(obj_names)/sizeof(obj_names[0]);
 
-typedef struct
-{
-    handler_t* table;
-    int number_of_items;
-} search_table_t;
-
-static char response_buf[TINY_RPC_MAX_RESPONSE_BUF_LEN];
-
 
 /* Private function declarations ------------------------------------------------------- */
 static char* append_str(char* to, const char* from);
 static int str_are_equal(const char* first, const char* second);
 static int find_next_object(int start_from, const char* input, struct rpc_token_info* info);
-static void reset_token_info(struct rpc_token_info* info);
+static void reset_token_info(rpc_token_info_t* info);
 static int get_obj_id(const char* input, rpc_token_info_t* info);
-static int get_fcn_id(const char* input, rpc_token_info_t* info);
-static int name_to_id(const char* name, search_table_t* table);
+static int get_fcn_id(json_rpc_instance_t* self, const char* input, rpc_token_info_t* info);
+static int name_to_id(const char* name, json_rpc_instance* table);
 
 
 /* Exported functions ------------------------------------------------------- */
-void json_rpc_init()
+void json_rpc_init(json_rpc_instance_t* self, json_rpc_handler_t* table_for_handlers, int max_num_of_handlers)
 {
-  int i;
-  for (i = 0; i < TINY_RPC_MAX_NUM_HANDLERS; i++)
-  {
-    handlers[i].fcn_name = 0;
-    handlers[i].handler = 0;
-  }
-}
+    int i;
+    self->handlers = table_for_handlers;
+    self->num_of_handlers = 0;
+    self->max_num_of_handlers = max_num_of_handlers;
 
-void json_rpc_register_handler(const char* fcn_name, json_rpc_handler_fcn handler)
-{
-  if(number_of_handlers < TINY_RPC_MAX_NUM_HANDLERS)
-  {
-    if(fcn_name && handler)
+    for (i = 0; i < self->max_num_of_handlers; i++)
     {
-      handlers[number_of_handlers].fcn_name = fcn_name;
-      handlers[number_of_handlers].handler = handler;
-      number_of_handlers++;
+        self->handlers[i].fcn_name = 0;
+        self->handlers[i].handler = 0;
     }
-  }
 }
 
-char* json_rpc_exec(const char* input, int input_len)
+void json_rpc_register_handler(json_rpc_instance_t* self, const char* fcn_name, json_rpc_handler_fcn handler)
+{
+    if (self->num_of_handlers < self->max_num_of_handlers)
+    {
+        if (fcn_name && handler)
+        {
+            self->handlers[self->num_of_handlers].fcn_name = fcn_name;
+            self->handlers[self->num_of_handlers].handler = handler;
+            self->num_of_handlers++;
+        }
+    }
+}
+
+char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_request_data_t* request_data)
 {
     char* res = 0;
-    rpc_token_info_t info;
+    rpc_token_info_t token_info;
     rpc_request_info_t request_info;
+
     int curr_pos = 0;
-    int obj_id;
-    int fcn_id;
+    int obj_id = -1;
+    int fcn_id = -2;
 
-    request_info.is_notification = 1; // assume ID is not valid (by default)
+    request_info.info_flags = rpc_request_is_notification; // assume it is notification
     request_info.id_start = -1;
+    request_info.data = request_data;
 
-    while(curr_pos < input_len)
+    while(curr_pos < request_data->request_len && request_data->request[curr_pos] != '{')
     {
-        curr_pos = find_next_object(curr_pos, input, &info);
-        if (info.obj_name_start > 0)
+        curr_pos++; // move past any whitespace/quotes and other..
+    }
+    while(curr_pos < request_data->request_len)
+    {
+        curr_pos = find_next_object(curr_pos, request_data->request, &token_info);
+        if (token_info.obj_name_start > 0)
         {
-            obj_id = get_obj_id(input, &info);
+            obj_id = get_obj_id(request_data->request, &token_info);
             switch (obj_id)
             {
-                case method:
-                    fcn_id = get_fcn_id(input, &info);
-                    break;
-                case params:
-                    request_info.params_start = info.values_start;
-                    request_info.params_len = info.values_end - info.values_start;
-                    break;
-                case request_id:
-                    if(!str_are_equal(input + info.values_start, "none") ||
-                       !str_are_equal(input + info.values_start, "null"))
+                case jsonrpc:
+                    if(str_are_equal(request_data->request + token_info.values_start, "\"2.0\""))
                     {
-                        request_info.is_notification = 0;
-                        request_info.id_start = info.obj_name_start; // mark start of the whole "id": ...
+                        request_info.info_flags |= rpc_request_is_rpc_20;
+                    }
+                    break;
+
+                case method:
+                    fcn_id = get_fcn_id(self, request_data->request, &token_info);
+                    break;
+
+                case params:
+                    request_info.params_start = token_info.values_start;
+                    request_info.params_len = token_info.values_end - token_info.values_start;
+                    break;
+
+                case request_id:
+                    if(!str_are_equal(request_data->request + token_info.values_start, "none") &&
+                       !str_are_equal(request_data->request + token_info.values_start, "null"))
+                    {
+                        request_info.info_flags &= ~rpc_request_is_notification;
+                        request_info.id_start = token_info.obj_name_start; // mark start of the whole "id": ...
                     }
                     break;
             }
@@ -166,32 +178,51 @@ char* json_rpc_exec(const char* input, int input_len)
 
     if(fcn_id < 0)
     {
-        res = json_rpc_error(json_rpc_method_not_found, input, &request_info);
+        if(fcn_id == -1)
+        {
+            res = json_rpc_error(json_rpc_err_method_not_found, &request_info);
+        }
+        else
+        {
+            res = json_rpc_error(json_rpc_err_invalid_request, &request_info);
+        }
     }
     else if(request_info.params_start < 0)
     {
-        res = json_rpc_error(json_rpc_invalid_request, input, &request_info);
+        res = json_rpc_error(json_rpc_err_invalid_request, &request_info);
     }
     else
     {
-        res = handlers[fcn_id].handler(input, &request_info); // everything OK, can call a handler
+        res = self->handlers[fcn_id].handler(&request_info); // everything OK, can call a handler
     }
 
     return res;
 }
 
-char* json_rpc_result(const char* result_str, const char* rpc_request, rpc_request_info_t* info)
+char* json_rpc_result(const char* result_str, rpc_request_info_t* info)
 {
-    char* buf = response_buf;
-    if(!info->is_notification)
+    char* buf = info->data->response;
+    if(!(info->info_flags & rpc_request_is_notification))
     {
-        buf = append_str(buf, response_prefix);
+        if(info->info_flags & rpc_request_is_rpc_20)
+        {
+            buf = append_str(buf, response_20_prefix);
+        }
+        else
+        {
+            buf = append_str(buf, response_1x_prefix);
+        }
+
         buf = append_str(buf, "\"result\": ");
         buf = append_str(buf, result_str);
+        if(!(info->info_flags & rpc_request_is_rpc_20))
+        {
+            buf = append_str(buf, ", \"error\": none");
+        }
         if(info->id_start > 0)
         {
             buf = append_str(buf, ", ");
-            buf = append_str(buf, rpc_request + info->id_start); // the rest of request, which is ID
+            buf = append_str(buf, info->data->request + info->id_start); // the rest of request, which is ID
         }
         else
         {
@@ -199,15 +230,22 @@ char* json_rpc_result(const char* result_str, const char* rpc_request, rpc_reque
         }
     }
     *buf = 0; // end of response (note, that it will be 0-length for notification)
-    return response_buf;
+    return info->data->response;
 }
 
-char* json_rpc_error(int err, const char* rpc_request, rpc_request_info_t* info)
+char* json_rpc_error(int err, rpc_request_info_t* info)
 {
-    char* buf = response_buf;
-    if(!info->is_notification)
+    char* buf = info->data->response;
+    if(!(info->info_flags & rpc_request_is_notification))
     {
-        buf = append_str(buf, response_prefix);
+        if(info->info_flags & rpc_request_is_rpc_20)
+        {
+            buf = append_str(buf, response_20_prefix);
+        }
+        else
+        {
+            buf = append_str(buf, response_1x_prefix);
+        }
         buf = append_str(buf, "\"error\": {\"code\": ");
         buf = append_str(buf, json_rpc_err_codes[err].error_code);
         buf = append_str(buf, ", \"message\": \"");
@@ -216,15 +254,44 @@ char* json_rpc_error(int err, const char* rpc_request, rpc_request_info_t* info)
         if(info->id_start > 0)
         {
             buf = append_str(buf, ", ");
-            buf = append_str(buf, rpc_request + info->id_start); // the rest of request, which is ID
+            buf = append_str(buf, info->data->request + info->id_start); // the rest of request, which is ID
         }
         else
         {
             buf = append_str(buf, "}");
         }
     }
-    *buf = 0; // end of response (note, tht it will be 0-length for notification)
-    return response_buf;
+    *buf = 0; // end of response (note, that it will be 0-length for notification)
+    return info->data->response;
+}
+
+char* json_rpc_error(const char* err_msg, rpc_request_info_t* info)
+{
+    char* buf = info->data->response;
+    if(!(info->info_flags & rpc_request_is_notification))
+    {
+        if(info->info_flags & rpc_request_is_rpc_20)
+        {
+            buf = append_str(buf, response_20_prefix);
+        }
+        else
+        {
+            buf = append_str(buf, response_1x_prefix);
+        }
+        buf = append_str(buf, "\"error\": ");
+        buf = append_str(buf, err_msg);
+        if(info->id_start > 0)
+        {
+            buf = append_str(buf, ", ");
+            buf = append_str(buf, info->data->request + info->id_start); // the rest of request, which is ID
+        }
+        else
+        {
+            buf = append_str(buf, "}");
+        }
+    }
+    *buf = 0; // end of response (note, that it will be 0-length for notification)
+    return info->data->response;
 }
 
 
@@ -259,12 +326,12 @@ static int str_are_equal(const char* first, const char* second)
 }
 
 
-static int name_to_id(const char* name, search_table_t* table)
+static int name_to_id(const char* name, json_rpc_instance* table)
 {
     const char* curr_name = name;
     const char* curr_item;
     int i;
-    for (i = 0; i < table->number_of_items; i++)
+    for (i = 0; i < table->num_of_handlers; i++)
     {
         curr_name = name;
         while(*curr_name == '\"')
@@ -272,7 +339,7 @@ static int name_to_id(const char* name, search_table_t* table)
             curr_name++; // skip opening quotes
             }
 
-        curr_item = table->table[i].fcn_name;
+        curr_item = table->handlers[i].fcn_name;
 
         while (*curr_name != 0   && // not the end of string?
                *curr_name != '\"' && // end of word marked by quote
@@ -289,28 +356,25 @@ static int name_to_id(const char* name, search_table_t* table)
             break;
         }
     }
-    return i == table->number_of_items ? -1 : i; // if not found, return -1
+    return i == table->num_of_handlers ? -1 : i; // if not found, return -1
 }
 
-static int get_fcn_id(const char* input, rpc_token_info_t* info)
+static int get_fcn_id(json_rpc_instance_t* self, const char* input, rpc_token_info_t* info)
 {
-    search_table_t table;
-    table.table = (handler_t*)handlers;
-    table.number_of_items = number_of_handlers;
     const char* name = &input[info->values_start];
-    return name_to_id(name, &table);
+    return name_to_id(name, self);
 }
 
 static int get_obj_id(const char* input, rpc_token_info_t* info)
 {
-    search_table_t table;
-    table.table = (handler_t*)obj_names;
-    table.number_of_items = num_of_obj_names;
+    json_rpc_instance table;
+    table.handlers = (json_rpc_handler_t*)obj_names;
+    table.num_of_handlers = num_of_obj_names;
     const char* name = &input[info->obj_name_start];
     return name_to_id(name, &table);
 }
 
-static void reset_token_info(struct rpc_token_info* info)
+static void reset_token_info(rpc_token_info_t* info)
 {
     info->obj_name_start = -1;
     info->obj_name_end = -1;
