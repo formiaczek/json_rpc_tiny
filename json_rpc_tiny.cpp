@@ -33,11 +33,20 @@
 #include <string.h>
 #include "json_rpc_tiny.h"
 
+
 /* Private types and definitions ------------------------------------------------------- */
 
-/**
- * @brief
- */
+static const char* response_prefix = "{\"jsonrpc\": \"2.0\", ";
+
+json_rpc_error_code_t json_rpc_err_codes[] =
+{
+    {"-32700", "Parse error"     },   /* An error occurred on the server while parsing the JSON text */
+    {"-32600", "Invalid Request" },   /* The JSON sent is not a valid Request object */
+    {"-32601", "Method not found"},   /* The method does not exist / is not available */
+    {"-32602", "Invalid params"  },   /* Invalid method parameter(s) */
+    {"-32603", "Internal error"  }    /* Internal JSON-RPC error */
+};
+
 typedef struct
 {
     json_rpc_handler_fcn handler;
@@ -81,12 +90,16 @@ typedef struct
 
 static char response_buf[TINY_RPC_MAX_RESPONSE_BUF_LEN];
 
+
 /* Private function declarations ------------------------------------------------------- */
+static char* append_str(char* to, const char* from);
+static int str_are_equal(const char* first, const char* second);
 static int find_next_object(int start_from, const char* input, struct rpc_token_info* info);
 static void reset_token_info(struct rpc_token_info* info);
 static int get_obj_id(const char* input, rpc_token_info_t* info);
 static int get_fcn_id(const char* input, rpc_token_info_t* info);
 static int name_to_id(const char* name, search_table_t* table);
+
 
 /* Exported functions ------------------------------------------------------- */
 void json_rpc_init()
@@ -117,13 +130,12 @@ char* json_rpc_exec(const char* input, int input_len)
     char* res = 0;
     rpc_token_info_t info;
     rpc_request_info_t request_info;
-
     int curr_pos = 0;
     int obj_id;
     int fcn_id;
-    int req_id;
 
-    request_info.id = -1; // default
+    request_info.is_notification = 1; // assume ID is not valid (by default)
+    request_info.id_start = -1;
 
     while(curr_pos < input_len)
     {
@@ -141,71 +153,111 @@ char* json_rpc_exec(const char* input, int input_len)
                     request_info.params_len = info.values_end - info.values_start;
                     break;
                 case request_id:
-                    if(sscanf(input + info.values_start,"%d", &req_id) == 1)
+                    if(!str_are_equal(input + info.values_start, "none") ||
+                       !str_are_equal(input + info.values_start, "null"))
                     {
-                        request_info.id = req_id;
+                        request_info.is_notification = 0;
+                        request_info.id_start = info.obj_name_start; // mark start of the whole "id": ...
                     }
-                    request_info.id_start = info.obj_name_start; // mark start of the whole "id": ...
                     break;
             }
         }
     }
 
-    // at this point, if obj_id, fcn_id are valid, we can make an RPC call..
-    if(obj_id >= 0 && fcn_id >= 0)
+    if(fcn_id < 0)
     {
-        res = handlers[fcn_id].handler(input, &request_info);
+        res = json_rpc_error(json_rpc_method_not_found, input, &request_info);
+    }
+    else if(request_info.params_start < 0)
+    {
+        res = json_rpc_error(json_rpc_invalid_request, input, &request_info);
     }
     else
     {
-        res = json_rpc_error("\"function not found or bad request\"", input, &request_info);
+        res = handlers[fcn_id].handler(input, &request_info); // everything OK, can call a handler
     }
+
     return res;
 }
 
-static const char* response_prefix = "{\"jsonrpc\": \"2.0\", ";
-static const char* result = "\"result\": ";
-static const char* error = "\"error\": ";
-
-// TODO: below result/error functions could be done better...
-char* json_rpc_result(const char* response, const char* rpc_request, rpc_request_info_t* info)
+char* json_rpc_result(const char* result_str, const char* rpc_request, rpc_request_info_t* info)
 {
     char* buf = response_buf;
-    strcpy(buf, response_prefix);
-    buf += strlen(response_prefix);
-    strcpy(buf, result);
-    buf += strlen(result);
-    strcpy(buf, response);
-    buf += strlen(response);
-    *buf++ = ' ';
-    *buf++ = ',';
-    strcpy(buf, rpc_request+info->id_start);
+    if(!info->is_notification)
+    {
+        buf = append_str(buf, response_prefix);
+        buf = append_str(buf, "\"result\": ");
+        buf = append_str(buf, result_str);
+        if(info->id_start > 0)
+        {
+            buf = append_str(buf, ", ");
+            buf = append_str(buf, rpc_request + info->id_start); // the rest of request, which is ID
+        }
+        else
+        {
+            buf = append_str(buf, "}");
+        }
+    }
+    *buf = 0; // end of response (note, that it will be 0-length for notification)
     return response_buf;
 }
 
-char* json_rpc_error(const char* err_str, const char* rpc_request, rpc_request_info_t* info)
+char* json_rpc_error(int err, const char* rpc_request, rpc_request_info_t* info)
 {
     char* buf = response_buf;
-    strcpy(buf, response_prefix);
-    buf += strlen(response_prefix);
-    strcpy(buf, error);
-    buf += strlen(error);
-    strcpy(buf, err_str);
-    buf += strlen(err_str);
-    if(info->id >= 0)
+    if(!info->is_notification)
     {
-        *buf++ = ',';
-        *buf++ = ' ';
-        strcpy(buf, rpc_request+info->id_start);
+        buf = append_str(buf, response_prefix);
+        buf = append_str(buf, "\"error\": {\"code\": ");
+        buf = append_str(buf, json_rpc_err_codes[err].error_code);
+        buf = append_str(buf, ", \"message\": \"");
+        buf = append_str(buf, json_rpc_err_codes[err].error_msg);
+        buf = append_str(buf, "\"}");
+        if(info->id_start > 0)
+        {
+            buf = append_str(buf, ", ");
+            buf = append_str(buf, rpc_request + info->id_start); // the rest of request, which is ID
+        }
+        else
+        {
+            buf = append_str(buf, "}");
+        }
     }
-    else
-    {
-        *buf++ = '}';
-    }
+    *buf = 0; // end of response (note, tht it will be 0-length for notification)
     return response_buf;
 }
+
 
 /* Private functions ------------------------------------------------------- */
+
+static char* append_str(char* to, const char* from)
+{
+    while(*from)
+    {
+        *to++ = *from++;
+    }
+    return to;
+}
+
+static int str_are_equal(const char* first, const char* second)
+{
+    int are_equal = 0;
+    while (*second != 0   && // not the end of string?
+           *first != 0  && // nor end of str
+           *first == *second) // until are equal
+    {
+        first++;
+        second++;
+    }
+
+    // here, if we're at the end of second = they match
+    if (*second == 0)
+    {
+        are_equal = 1;
+    }
+    return are_equal;
+}
+
 
 static int name_to_id(const char* name, search_table_t* table)
 {
@@ -266,11 +318,18 @@ static void reset_token_info(struct rpc_token_info* info)
     info->values_end = -1;
 }
 
+enum parsing_flags
+{
+    flag_none = 0,
+    flag_in_array = 1,
+    flag_in_object = 2
+};
+
 static int find_next_object(int start_from, const char* input, struct rpc_token_info* info)
 {
     int curr_pos = start_from;
     int max_len = strlen(input);
-    uint8_t in_params = 0;
+    unsigned int flags = flag_none;
     char curr;
     reset_token_info(info);
 
@@ -296,33 +355,45 @@ static int find_next_object(int start_from, const char* input, struct rpc_token_
         }
         curr_pos++;
     }
+
     // find value(s) for this object
     while(curr_pos < max_len)
     {
         curr = input[curr_pos];
-        if(curr == ':')
+        switch(curr)
         {
+        case ':':
             while(input[++curr_pos] == ' '); // skip spaces
-            info->values_start = curr_pos;
+            if(!(flags & flag_in_object))
+            {
+                info->values_start = curr_pos;
+            }
             continue;
-        }
 
-        if(curr == '[')
-        {
-            in_params = 1;
+        case '[':
+            flags |= flag_in_array;
+            curr_pos++;
+            continue;
+
+        case '{':
+            flags |= flag_in_object;
+            curr_pos++;
+            continue;
+
+        case ']':
+            flags &= ~flag_in_array;
+            curr_pos++;
+            continue;
+
+        case '}':
+            flags &= ~flag_in_object;
             curr_pos++;
             continue;
         }
 
-        if(curr == ']')
-        {
-            in_params = 0;
-            curr_pos++;
-            continue;
-        }
-
-        if( (in_params == 0 && curr == ',') ||
-           curr == '}')
+        if( flags == flag_none &&
+            (curr == ',' ||
+             curr == '}'))
         {
             info->values_end = curr_pos;
             curr_pos++;

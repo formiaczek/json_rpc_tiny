@@ -35,9 +35,8 @@
 #define TINY_RPC_MAX_FCN_NAME_LEN      16
 #define TINY_RPC_MAX_RESPONSE_BUF_LEN  64
 
-#ifndef PRINT_FCN
-#include <stdio.h>
-#define PRINT_FCN(...) printf(__VA_ARGS__)
+#ifndef RPC_VER
+#define RPC_VER 2
 #endif
 
 
@@ -47,29 +46,47 @@ typedef struct rpc_request_info
 {
     int params_start;
     int params_len;
-    int id;
+    int is_notification;
     int id_start;
 } rpc_request_info_t;
 
+typedef struct json_rpc_error_code
+{
+    const char* error_code;
+    const char* error_msg;
+} json_rpc_error_code_t;
+
+
+extern json_rpc_error_code_t json_rpc_err_codes[];
+
+enum json_rpc_errors
+{
+    json_rpc_parse_error = 0,       /* An error occurred on the server while parsing the JSON text */
+    json_rpc_invalid_request,       /* The JSON sent is not a valid Request object */
+    json_rpc_method_not_found,      /* The method does not exist / is not available */
+    json_rpc_invalid_params,        /* Invalid method parameter(s) */
+    json_rpc_internal_error,        /* Internal JSON-RPC error */
+};
 
 /**
  * @brief  Definition of a handler type for RPC handlers.
  * @param rpc_request pointer to original JSON-RPC request string that was received.
  * @param info rpc_request_info with parsing results. This structure will be
  *        initialised to point at 'params', so:
- *        - values_start/values_end will be offsets in rpc_request marking string containing parameters
- *          for this RPC call. Handler implementation should use values_start, values_end to extract
+ *        - params_start/params_len within rpc_request points at string containing parameters
+ *          for this RPC call. Handler implementation should use params_start, params_len to extract
  *          those parameters as appropriate.
  * @return pointer to the JSON-RPC complaint response (if 'id' is > 0): request, or NULL (if id < 0): notification
  */
 typedef char* (*json_rpc_handler_fcn)(const char* rpc_request, rpc_request_info_t* info);
 
 
-
 /* Exported functions ------------------------------------------------------- */
 void json_rpc_init();
 void json_rpc_register_handler(const char* fcn_name, json_rpc_handler_fcn handler);
 char* json_rpc_exec(const char* input, int input_len);
-char* json_rpc_result(const char* response, const char* rpc_request, rpc_request_info_t* info);
-char* json_rpc_error(const char* response, const char* rpc_request, rpc_request_info_t* info);
+char* json_rpc_result(const char* result_str, const char* rpc_request, rpc_request_info_t* info);
+char* json_rpc_error(int err_code, const char* rpc_request, rpc_request_info_t* info);
+
+
 #endif /* JSON_RPC_TINY */
