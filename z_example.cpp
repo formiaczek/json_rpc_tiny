@@ -54,27 +54,23 @@ char* search(rpc_request_info_t* info)
 {
     // could do it in 'C' (a.k.a.: hacking)
     char* res = 0;
-    char params[64];
-    strncpy(params, info->data->request + info->params_start,
-            info->params_len);
-    params[info->params_len] = 0;
+    char param[64];
 
-    char param_name[16], param_value[16];
+    // for named params- there is an 'helper' function to find those params by their name
+    // (can be useful as this allows finding them regardless of their order in the original
+    // request.
+    // (in C++ could really extract them one by one, putting them in a map,
+    // and then access them by name, for example)
+    rpc_param_info_t param_info;
+    rpc_find_param_values("last_name", &param_info, info);
 
-    printf("\n ===> called\n  search(%s, notif: %d)\n  i.e.:\n",
-            params, info->info_flags & rpc_request_is_notification);
-
-    sscanf(params, "%*[^\"]\"%[^\"]\"%*[^\"]\"%[^\"]\"", param_name, param_value);
-    printf("  search(%s=%s)\n", param_name, param_value);
-
-    if(strcmp(param_name, "last_name"))
+    if(param_info.value_len > 0 )
     {
-        // return json_rpc_error (using error value) on failure
-        res = json_rpc_error(json_rpc_err_invalid_params, info);
-    }
-    else
-    {
-        if(!strcmp(param_value, "Python"))
+        strncpy(param, info->data->request + param_info.value_start,
+                param_info.value_len);
+        param[param_info.value_len] = 0;
+
+        if(!strcmp(param, "\"Python\""))
         {
             res = json_rpc_result("\"Monty\"", info);
         }
@@ -82,6 +78,11 @@ char* search(rpc_request_info_t* info)
         {
             res = json_rpc_result("none", info);
         }
+    }
+    else
+    {
+        // return json_rpc_error (using error value) on failure
+        res = json_rpc_error(json_rpc_err_invalid_params, info);
     }
     return res;
 }

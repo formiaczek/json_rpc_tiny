@@ -59,6 +59,12 @@ typedef struct rpc_request_info
     json_rpc_request_data_t* data;
 } rpc_request_info_t;
 
+typedef struct rpc_param_info
+{
+    int value_start;
+    int value_len;
+}rpc_param_info_t;
+
 
 /**
  * @brief  Definition of a handler type for RPC handlers.
@@ -103,5 +109,6 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_request_data_t
 char* json_rpc_result(const char* result_str, rpc_request_info_t* info);
 char* json_rpc_error(int err_code, rpc_request_info_t* info);
 char* json_rpc_error(const char* err_msg, rpc_request_info_t* info);
+void rpc_find_param_values(const char* param_name, rpc_param_info* param_info, rpc_request_info_t* info);
 
 #endif /* JSON_RPC_TINY */

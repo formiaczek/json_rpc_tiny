@@ -199,6 +199,43 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_request_data_t
     return res;
 }
 
+
+void rpc_find_param_values(const char* param_name, rpc_param_info* param_info, rpc_request_info_t* info)
+{
+    rpc_token_info_t token_info;
+    int curr_pos = info->params_start;
+    param_info->value_len = 0;
+    param_info->value_start = -1;
+    char last_char;
+
+    while(curr_pos < info->data->request_len && info->data->request[curr_pos] != '{')
+    {
+        curr_pos++; // move past any whitespace/quotes and other..
+    }
+    while(curr_pos < info->data->request_len)
+    {
+        curr_pos = find_next_object(curr_pos, info->data->request, &token_info);
+        if (token_info.obj_name_start > 0)
+        {
+            if(str_are_equal(info->data->request + token_info.obj_name_start+1, param_name))
+            {
+                param_info->value_start = token_info.values_start;
+
+                last_char = info->data->request[token_info.values_end];
+                while(last_char == '}' || last_char == ']' ||
+                      last_char == ',' || last_char == ' ')
+                {
+                    token_info.values_end--;
+                    last_char = info->data->request[token_info.values_end];
+                }
+                param_info->value_len = token_info.values_end + 1 - token_info.values_start;
+                break;
+            }
+        }
+    }
+}
+
+
 char* json_rpc_result(const char* result_str, rpc_request_info_t* info)
 {
     char* buf = info->data->response;
@@ -467,5 +504,4 @@ static int find_next_object(int start_from, const char* input, struct rpc_token_
     }
     return curr_pos;
 }
-
 
