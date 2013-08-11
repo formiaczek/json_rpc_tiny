@@ -8,8 +8,7 @@ It is very simple and simple to use:
  - compatible with JSON-RPC 2.0 (version is automatically recognised)
  - can be used in C / C++ code (also in embedded code, where allocators and stdlib is not available).
  - contains simple service / function handler registration mechanism.
- - gives full control over arguments extraction from the handler.
- - provides interface to aid named params extraction from handlers.
+ - provides interface to aid params extraction from handlers (including named params and to-int conversions).
  - implements easy response creation using: json_rpc_result(): on success, 
    or json_rpc_error(): on failure.
  - allows for passing an argument to the handler, and it can be different for each call.
