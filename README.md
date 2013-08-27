@@ -1,7 +1,7 @@
 json_rpc_tiny
 =============
 
-tiny json_rpc implementation for c/c++.
+tiny json_rpc implementation for C(inc. embedded with no stdlib) and /c++.
 
 It is very simple and simple to use:
  - uses pre-allocated storage
