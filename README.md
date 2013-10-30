@@ -1,9 +1,11 @@
 json_rpc_tiny
 =============
 
-tiny json_rpc implementation for C(inc. embedded with no stdlib) and /c++.
+tiny json_rpc implementation for C (inc. embedded with no stdlib) and /c++.
+An incredibly simple and simple to use,
+yet powerful library that implements server, but could also be used for client code.
 
-It is very simple and simple to use:
+Some of the futures:
  - uses pre-allocated storage
  - compatible with JSON-RPC 2.0 (version is automatically recognised)
  - can be used in C / C++ code (also in embedded code, where allocators and stdlib is not available).
