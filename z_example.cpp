@@ -332,17 +332,17 @@ const char*  handle_request_for_example(int example_number, json_rpc_data_t& req
 
 
 template <typename ParamType>
-int extract_int_param(ParamType param_pos, const char* res_str, json_rpc_instance& rpc)
+int extract_int_param(ParamType param_name_or_pos, const char* res_str)
 {
     int int_res = -1;
     rpc_request_info_t info;
     json_rpc_data_t r_data;
     if(json_rpc_parse_result(res_str, &r_data, &info))
     {
-        if(!rpc_extract_param_int(param_pos, &int_res, &info))
+        if(!rpc_extract_param_int(param_name_or_pos, &int_res, &info))
         {
             std::stringstream err;
-            err << __FUNCTION__ << " error extracting param: " << param_pos;
+            err << __FUNCTION__ << " error extracting param: " << param_name_or_pos;
             err << " from: " << res_str << "\n";
         }
     }
@@ -350,7 +350,7 @@ int extract_int_param(ParamType param_pos, const char* res_str, json_rpc_instanc
 }
 
 template <typename ParamType>
-std::string extract_str_param(ParamType param_pos, const char* res_str, json_rpc_instance& rpc)
+std::string extract_str_param(ParamType param_name_or_pos, const char* res_str)
 {
     std::string result;
     rpc_request_info_t info;
@@ -358,15 +358,16 @@ std::string extract_str_param(ParamType param_pos, const char* res_str, json_rpc
     if(json_rpc_parse_result(res_str, &r_data, &info))
     {
         int str_size = 0;
-        const char* str_res = rpc_extract_param_str(param_pos, &str_size, &info);
+        const char* str_res = rpc_extract_param_str(param_name_or_pos, &str_size, &info);
         if(str_res)
         {
-            result = std::string(str_res, str_size);
+            result.clear();
+            result.insert(0, str_res, str_size);
         }
         else
         {
             std::stringstream err;
-            err << __FUNCTION__ << " error extracting param: " << param_pos;
+            err << __FUNCTION__ << " error extracting param: " << param_name_or_pos;
             err << " from: " << res_str << "\n";
         }
     }
@@ -384,34 +385,34 @@ int run_tests(json_rpc_instance& rpc)
 
         res_str = handle_request_for_example(2, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_str_param(0, res_str, rpc) == "\"Monty\"");
-        TEST_COND_(extract_str_param(1, res_str, rpc) == ""); // not existing.
+        TEST_COND_(extract_str_param(0, res_str) == "\"Monty\"");
+        TEST_COND_(extract_str_param(1, res_str) == ""); // not existing.
 
         res_str = handle_request_for_example(9, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_int_param("res", res_str, rpc) == 32);
-        TEST_COND_(extract_str_param("operation", res_str, rpc) == "\"*\"");
+        TEST_COND_(extract_int_param("res", res_str) == 32);
+        TEST_COND_(extract_str_param("operation", res_str) == "\"*\"");
 
         res_str = handle_request_for_example(10, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_str_param("operation", res_str, rpc) == "\"+\"");
-        TEST_COND_(extract_int_param("res", res_str, rpc) == 160);
+        TEST_COND_(extract_str_param("operation", res_str) == "\"+\"");
+        TEST_COND_(extract_int_param("res", res_str) == 160);
 
         res_str = handle_request_for_example(11, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_int_param("first", res_str, rpc) == 128);
-        TEST_COND_(extract_str_param("second", res_str, rpc) == "\"the string\"");
-        TEST_COND_(extract_int_param("third", res_str, rpc) == 256);
-        TEST_COND_(extract_str_param(0, res_str, rpc) == "\"first\": 128"); // the whole '0-param' part
+        TEST_COND_(extract_int_param("first", res_str) == 128);
+        TEST_COND_(extract_str_param("second", res_str) == "\"the string\"");
+        TEST_COND_(extract_int_param("third", res_str) == 256);
+        TEST_COND_(extract_str_param(0, res_str) == "\"first\": 128"); // the whole '0-param' part
 
         // tests negative value extraction (hex/dec/oct) etc.
         res_str = handle_request_for_example(13, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_int_param("res", res_str, rpc) == -40);
+        TEST_COND_(extract_int_param("res", res_str) == -40);
 
         res_str = handle_request_for_example(14, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_int_param("res", res_str, rpc) == -5);
+        TEST_COND_(extract_int_param("res", res_str) == -5);
 
         std::cout << "\n===== ALL TESTS PASSED =====\n\n";
     }
