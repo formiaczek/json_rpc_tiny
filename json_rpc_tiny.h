@@ -37,18 +37,17 @@
 
 
 /**
- * @brief Structure defining request info. Object of such a structure
- *        is to be used to pass information about request/response buffers to
- *        to function handling the request.
+ * @brief Structure defining rpc data info. Object of such a structure
+ *        is to be used to pass information about request/response buffers.
  */
-typedef struct json_rpc_request_data
+typedef struct json_rpc_data
 {
     const char* request;
     char*       response;
     int         request_len;
     int         response_len;
     void*       arg;
-} json_rpc_request_data_t;
+} json_rpc_data_t;
 
 
 /**
@@ -63,7 +62,7 @@ typedef struct rpc_request_info
     int params_len;
     int id_start;
     unsigned int info_flags; // TODO: add param to be passed to handlers ?
-    json_rpc_request_data_t* data;
+    json_rpc_data_t* data;
 } rpc_request_info_t;
 
 
@@ -144,11 +143,11 @@ void json_rpc_register_handler(json_rpc_instance_t* self, const char* fcn_name, 
  * @param self pointer to the json_rpc_instance_t object.
  * @param request_data pointer to a structure holding information about the request string,
  *        information where the resulting response is to be stored (if any), and additional information
- *        to be passed to the handler (see json_rpc_request_data_t for more info).
+ *        to be passed to the handler (see json_rpc_data_t for more info).
  * @return Pointer to buffer containing the response (the same buffer as passed in request_data).
  *         If the request was a notification only, this buffer will be empty.
  */
-char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_request_data_t* request_data);
+char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* request_data);
 
 
 /**
@@ -191,6 +190,8 @@ char* json_rpc_error(const char* err_msg, rpc_request_info_t* info);
 
 /**
  * @brief Helper function to extract value of a named parameter as string.
+ *        It also can be used to extract parameters of any type (*integer parameters
+ *        can be extracted using rpc_extract_param_int) and result can be converted appropriately.
  * @param param_name null-terminated name of the named parameter to extract.
  * @param str_length (out) Pointer to a variable where length of the string value will
  *        be stored if param is found and successfully extracted.
@@ -204,18 +205,20 @@ const char* rpc_extract_param_str(const char* param_name,  int* str_length, rpc_
 /**
  * @brief Helper function to extract value of a named parameter as integer.
  *        It works similarly to the 'atoi', but works on the original request buffer
- *        and automatically detects and extracts octal or decimal values.
+ *        and automatically detects and extracts negative, octal or decimal values.
  * @param param_name null-terminated name of the named parameter to extract.
  * @param result (out) Pointer to a variable where extracted value will be
  *        be stored if param is found.
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  * @returns non-zero if value was successfully extracted, zero-otherwise.
  */
-int         rpc_extract_param_int(const char* param_name,  int* result,     rpc_request_info_t* info);
+int rpc_extract_param_int(const char* param_name,  int* result,     rpc_request_info_t* info);
 
 
 /**
  * @brief Helper function to extract value of a named parameter as string.
+ *        It also can be used to extract parameters of any type (*integer parameters
+ *        can be extracted using rpc_extract_param_int) and result can be converted appropriately.
  * @param param_name null-terminated name of the named parameter to extract.
  * @param str_length (out) Pointer to a variable where length of the string value will
  *        be stored if param is found and successfully extracted.
@@ -225,17 +228,28 @@ int         rpc_extract_param_int(const char* param_name,  int* result,     rpc_
  */
 const char* rpc_extract_param_str(int param_no_zero_based, int* str_length, rpc_request_info_t* info);
 
+
 /**
  * @brief Helper function to extract value of a parameter as integer.
  *        It works similarly to the 'atoi', but works on the original request buffer
- *        and automatically detects and extracts octal or decimal values.
+ *        and automatically detects and extracts negative, octal or decimal values.
  * @param param_no_zero_based Number of the parameter to be converted (zero-based).
  * @param result (out) Pointer to a variable where extracted value will be
  *        be stored if param is found and successfully extracted.
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  * @returns non-zero if value was successfully extracted, zero-otherwise.
  */
-int         rpc_extract_param_int(int param_no_zero_based, int* result,     rpc_request_info_t* info);
+int rpc_extract_param_int(int param_no_zero_based, int* result, rpc_request_info_t* info);
+
+
+/**
+ * @brief Helper function to process result form a JSON response.
+ * @param result_str Pointer to a result string (zero-terminated).
+ * @param req_data Number of the parameter to be converted (zero-based).
+ * @param info pointer to the rpc_request_info_t structure.
+ * @returns non-zero if results were successfully parsed, zero-otherwise.
+ */
+int json_rpc_parse_result(const char* result_str, json_rpc_data_t* req_data, rpc_request_info_t* info);
 
 
 #endif /* JSON_RPC_TINY */

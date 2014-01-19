@@ -68,7 +68,10 @@ static json_rpc_handler_t obj_names[] =
     {0, "jsonrpc"},
     {0, "method"},
     {0, "params"},
-    {0, "id"}
+    {0, "id"},
+    {0, "result"},
+    {0, "error"},
+
 };
 
 enum obj_name_ids
@@ -76,7 +79,8 @@ enum obj_name_ids
     jsonrpc = 0,
     method,
     params,
-    request_id
+    request_id,
+    the_result
 };
 
 enum request_info_flags
@@ -129,7 +133,7 @@ void json_rpc_register_handler(json_rpc_instance_t* self, const char* fcn_name, 
     }
 }
 
-char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_request_data_t* request_data)
+char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* request_data)
 {
     char* res = 0;
     rpc_token_info_t token_info;
@@ -275,7 +279,9 @@ const char* rpc_extract_param_str(int param_no_zero_based, int* str_length, rpc_
 
     while(curr_pos < params_end &&
          (info->data->request[curr_pos] == '{' ||
-          info->data->request[curr_pos] == '[' ))
+          info->data->request[curr_pos] == ',' ||
+          info->data->request[curr_pos] == ' ' ||
+          info->data->request[curr_pos] == '[' ) )
     {
         curr_pos++; // move past any whitespace/quotes and other..
     }
@@ -287,26 +293,45 @@ const char* rpc_extract_param_str(int param_no_zero_based, int* str_length, rpc_
         {
         case ',':
         case ']':
-            curr_param_len = curr_pos-curr_param_start;
+        case '}':
             if(curr_param_no == param_no_zero_based)
             {
+                curr_param_len = curr_pos-curr_param_start;
                 result = info->data->request + curr_param_start;
                 *str_length = curr_param_len;
                 curr_pos = params_end-1; // to exit the loop..
             }
             else
             {
+                // if params were JSON object, that's the end of them
+                if(info->data->request[curr_pos] == '}')
+                {
+                    curr_pos = params_end-1; // to exit the loop..
+                    break;
+                }
                 curr_param_no++;
                 curr_pos++;
-                while(info->data->request[curr_pos] == ' ') // skip white space
+                while(info->data->request[curr_pos] == ' ' ||
+                     info->data->request[curr_pos] == ','  ) // skip comma and white space
                 {
                     curr_pos++;
                 }
                 curr_param_start = curr_pos;
             }
             break;
+
+        default:
+            // by default (it might not end up with space, comma or bracket)
+            // assume it starts at curr_start and ends at curr_pos+1
+            if(param_no_zero_based == curr_param_no &&
+               curr_pos > curr_param_start)
+            {
+                result = info->data->request + curr_param_start;
+                *str_length = curr_pos + 1 - curr_param_start;
+            }
+            break;
         }
-        curr_pos ++;
+        curr_pos++;
     }
     return result;
 }
@@ -323,6 +348,37 @@ int rpc_extract_param_int(int param_no_zero_based, int* result, rpc_request_info
         if(convert_to_int(p, param_val_str_len, result))
         {
             extracted_ok = 1;
+        }
+    }
+    return extracted_ok;
+}
+
+int json_rpc_parse_result(const char* result_str,
+                          json_rpc_data_t* req_data,
+                          rpc_request_info_t* info)
+{
+    int extracted_ok = 0;
+    int result_str_len = str_len(result_str);
+    int curr_pos = 0;
+    int obj_id = -1;
+    rpc_token_info_t token_info;
+    req_data->request = result_str; // use response as request now, so that we could parse it..
+    req_data->request_len = str_len(result_str); // when extracting params
+    info->data = req_data;
+
+    while(curr_pos < result_str_len)
+    {
+        curr_pos = find_next_object(curr_pos, result_str, &token_info);
+        if(token_info.obj_name_start > 0)
+        {
+            obj_id = get_obj_id(result_str, &token_info);
+            if(obj_id == the_result)
+            {
+                info->params_start = token_info.values_start;
+                info->params_len = token_info.values_end - token_info.values_start;
+                extracted_ok = 1;
+                break;
+            }
         }
     }
     return extracted_ok;
@@ -496,21 +552,29 @@ static int convert_to_int(const char* start, int length, int* result)
     int extracted_ok = 1;
     int base = 10;
     int value = 0;
+    int sign = 1;
     int val_start = 0;
     int i = 0;
 
-    // find base: 0x: hex(16), 0:octal(8)
-    if(length > 2 && start[0] == '0')
+    if(length > 0 && start[0] == '-')
     {
-        if(start[1] == 'x')
+        sign = -1;
+        val_start++;
+    }
+
+    // find base: 0x: hex(16), 0:octal(8)
+    if(length > val_start+2 &&
+       start[val_start] == '0')
+    {
+        if(start[val_start+1] == 'x')
         {
             base = 16;
-            val_start = 2;
+            val_start += 2;
         }
         else
         {
             base = 8;
-            val_start = 1;
+            val_start += 1;
         }
     }
 
@@ -530,6 +594,7 @@ static int convert_to_int(const char* start, int length, int* result)
         }
         *result += value;
     }
+    *result *= sign;
     return extracted_ok;
 }
 
@@ -672,6 +737,11 @@ static int find_next_object(int start_from, const char* input, struct rpc_token_
             break;
         }
         curr_pos++;
+    }
+
+    if(info->values_end < 0)
+    {
+        info->values_end = max_len;
     }
     return curr_pos;
 }
