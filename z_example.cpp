@@ -53,10 +53,10 @@ char* search(rpc_request_info_t* info)
 
     if(last_name && rpc_extract_param_int("age", &age, info))
     {
-        if(strncmp(last_name, "\"Python\"", last_name_len) == 0 &&
+        if(strncmp(last_name, "Python", last_name_len) == 0 &&
            age == 26)
         {
-            res = json_rpc_result("\"Monty\"", info);
+            res = json_rpc_result("Monty", info);
         }
         else
         {
@@ -127,10 +127,10 @@ char* calculate(rpc_request_info_t* info)
       rpc_extract_param_int("second", &second, info))
     {
         std::stringstream result;
-        result << "{" << "\"operation\": " << std::string(operation, op_len);
-        result << ", \"res\": ";
+        result << "{" << "\"operation\": \"" << std::string(operation, op_len);
+        result << "\", \"res\": ";
 
-        switch(operation[1]) // operation is defined in quotes
+        switch(operation[0])
         {
         case '*':
             result << first * second;
@@ -164,7 +164,6 @@ char* calculate(rpc_request_info_t* info)
 char* ordered_params(rpc_request_info_t* info)
 {
     char* res = 0;
-
     // can use similar functions to extract parameters by their position
     // (i.e. if they are comma-separated, not-named parameters)
     int first;
@@ -210,7 +209,26 @@ char* handleMessage(rpc_request_info_t* info)
     // note : don't change response directly: using json_rpc_result() or json_rpc_error()
     // you can update response data with required data (and JSON tags will be appended
     // automatically
-    return json_rpc_result("\"OK\"", info);
+    return json_rpc_result("OK", info);
+}
+
+
+char* send_back(rpc_request_info_t* info)
+{
+    char* res = NULL;
+    int len = 0;
+    const char* msg = rpc_extract_param_str("what", &len, info);
+    if(msg)
+    {
+        std::string message(msg, len);
+        message = "{\"res\": \"" + message + "\"}";
+        res = json_rpc_result(message.c_str(), info);
+    }
+    else
+    {
+        res = json_rpc_error(json_rpc_err_invalid_params, info);
+    }
+    return res;
 }
 
 
@@ -231,6 +249,7 @@ const char* example_requests[] =
  "{\"method\": \"handleMessage\", \"params\": [\"user3\", \"sorry, gotta go now, ttyl\"], \"id\": null}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x17, \"second\": -17, \"op\": \"+\"}], \"id\": 41}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x32, \"second\": -055, \"op\": \"-\"}], \"id\": 42}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"send_back\", \"params\": [{\"what\": \"{[{abcde}]}\"}], \"id\": 44}",
 
 };
 const int num_of_examples = sizeof(example_requests)/sizeof(char*);
@@ -242,7 +261,6 @@ json_rpc_handler_t storage_for_handlers[MAX_NUM_OF_HANDLERS];
 
 #define RESPONSE_BUF_MAX_LEN  128
 char response_buffer[RESPONSE_BUF_MAX_LEN];
-
 
 int main(int argc, char **argv)
 {
@@ -258,6 +276,7 @@ int main(int argc, char **argv)
     json_rpc_register_handler(&rpc, "use_argument",   use_argument);
     json_rpc_register_handler(&rpc, "calculate",      calculate);
     json_rpc_register_handler(&rpc, "ordered_params", ordered_params);
+    json_rpc_register_handler(&rpc, "send_back",      send_back);
 
     // prepare and initialise request data
     json_rpc_data_t req_data;
@@ -321,6 +340,7 @@ int main(int argc, char **argv)
 #include <stdexcept>
 #define TEST_COND_(_cond_, ...) ({ if(!(_cond_)) { \
                                   std::stringstream s; s << "test error: assertion at line: " << __LINE__ << "\n"; \
+                                  s << " " << #_cond_ << "\n"; \
                                   throw std::runtime_error(s.str()); } })
 
 const char*  handle_request_for_example(int example_number, json_rpc_data_t& req_data, json_rpc_instance& rpc)
@@ -385,23 +405,23 @@ int run_tests(json_rpc_instance& rpc)
 
         res_str = handle_request_for_example(2, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_str_param(0, res_str) == "\"Monty\"");
+        TEST_COND_(extract_str_param(0, res_str) == "Monty");
         TEST_COND_(extract_str_param(1, res_str) == ""); // not existing.
 
         res_str = handle_request_for_example(9, req_data, rpc);
         TEST_COND_(res_str);
         TEST_COND_(extract_int_param("res", res_str) == 32);
-        TEST_COND_(extract_str_param("operation", res_str) == "\"*\"");
+        TEST_COND_(extract_str_param("operation", res_str) == "*");
 
         res_str = handle_request_for_example(10, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_str_param("operation", res_str) == "\"+\"");
+        TEST_COND_(extract_str_param("operation", res_str) == "+");
         TEST_COND_(extract_int_param("res", res_str) == 160);
 
         res_str = handle_request_for_example(11, req_data, rpc);
         TEST_COND_(res_str);
         TEST_COND_(extract_int_param("first", res_str) == 128);
-        TEST_COND_(extract_str_param("second", res_str) == "\"the string\"");
+        TEST_COND_(extract_str_param("second", res_str) == "the string");
         TEST_COND_(extract_int_param("third", res_str) == 256);
         TEST_COND_(extract_str_param(0, res_str) == "\"first\": 128"); // the whole '0-param' part
 
@@ -413,6 +433,10 @@ int run_tests(json_rpc_instance& rpc)
         res_str = handle_request_for_example(14, req_data, rpc);
         TEST_COND_(res_str);
         TEST_COND_(extract_int_param("res", res_str) == -5);
+
+        res_str = handle_request_for_example(15, req_data, rpc);
+        TEST_COND_(res_str);
+        TEST_COND_(extract_str_param("res", res_str) == "{[{abcde}]}"); // if value in quotes, do not treat it as JSON
 
         std::cout << "\n===== ALL TESTS PASSED =====\n\n";
     }

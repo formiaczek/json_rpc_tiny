@@ -32,6 +32,7 @@
 #include "json_rpc_tiny.h"
 
 
+
 /* Private types and definitions ------------------------------------------------------- */
 
 static const char* response_1x_prefix = "{";
@@ -98,12 +99,13 @@ static char* append_str(char* to, const char* from);
 static int str_are_equal(const char* first, const char* second);
 static int int_val(char symbol, int* result);
 static int convert_to_int(const char* start, int length, int* result);
+static int find_next_value(int start_from, const char* input, struct rpc_token_info* info);
 static int find_next_object(int start_from, const char* input, struct rpc_token_info* info);
 static void reset_token_info(rpc_token_info_t* info);
 static int get_obj_id(const char* input, rpc_token_info_t* info);
 static int get_fcn_id(json_rpc_instance_t* self, const char* input, rpc_token_info_t* info);
 static int name_to_id(const char* name, json_rpc_instance* table);
-
+static int skip_all_of(const char* input, int start_at, const char* values, char reversed);
 
 /* Exported functions ------------------------------------------------------- */
 void json_rpc_init(json_rpc_instance_t* self, json_rpc_handler_t* table_for_handlers, int max_num_of_handlers)
@@ -216,14 +218,9 @@ const char* rpc_extract_param_str(const char* param_name, int* str_length, rpc_r
     rpc_token_info_t token_info;
     int curr_pos = info->params_start;
     *str_length = 0;
-    char last_char;
 
-    while(curr_pos < info->data->request_len &&
-         (info->data->request[curr_pos] == '{' ||
-          info->data->request[curr_pos] == '[' ))
-    {
-        curr_pos++; // move past any whitespace/quotes and other..
-    }
+    // skip whitespace and opening brackets..
+    curr_pos = skip_all_of(info->data->request, curr_pos, " \t{[\n\r", 0);
 
     while(curr_pos < info->data->request_len)
     {
@@ -233,15 +230,7 @@ const char* rpc_extract_param_str(const char* param_name, int* str_length, rpc_r
             if(str_are_equal(info->data->request + token_info.obj_name_start+1, param_name))
             {
                 result = info->data->request + token_info.values_start;
-
-                last_char = info->data->request[token_info.values_end];
-                while(last_char == '}' || last_char == ']' ||
-                      last_char == ',' || last_char == ' ')
-                {
-                    token_info.values_end--;
-                    last_char = info->data->request[token_info.values_end];
-                }
-                *str_length = token_info.values_end + 1 - token_info.values_start;
+                *str_length = token_info.values_end - token_info.values_start;
                 break;
             }
         }
@@ -270,68 +259,35 @@ const char* rpc_extract_param_str(int param_no_zero_based, int* str_length, rpc_
 {
     const char* result = 0;
     int curr_pos = info->params_start;
-    *str_length = 0;
-
     int params_end = info->params_start + info->params_len;
-    int curr_param_start = 0;
-    int curr_param_len = 0;
     int curr_param_no = 0;
 
-    while(curr_pos < params_end &&
-         (info->data->request[curr_pos] == '{' ||
-          info->data->request[curr_pos] == ',' ||
-          info->data->request[curr_pos] == ' ' ||
-          info->data->request[curr_pos] == '[' ) )
-    {
-        curr_pos++; // move past any whitespace/quotes and other..
-    }
+    *str_length = 0; // on error - return 0 as length (default)
 
-    curr_param_start = curr_pos;
+    // skip whitespace and opening brackets..
+    curr_pos = skip_all_of(info->data->request, curr_pos, " \t{[\n\r", 0);
+
+    rpc_token_info next_val_info;
+    reset_token_info(&next_val_info);
+
+    // extract values one-by-one until curr_param_no matches..
     while(curr_pos < params_end)
     {
-        switch(info->data->request[curr_pos])
+        curr_pos = find_next_value(curr_pos, info->data->request, &next_val_info);
+        if(curr_param_no == param_no_zero_based)
         {
-        case ',':
-        case ']':
-        case '}':
-            if(curr_param_no == param_no_zero_based)
+            *str_length = next_val_info.values_end - next_val_info.values_start;
+            if(*str_length > 0)
             {
-                curr_param_len = curr_pos-curr_param_start;
-                result = info->data->request + curr_param_start;
-                *str_length = curr_param_len;
-                curr_pos = params_end-1; // to exit the loop..
+                result = info->data->request + next_val_info.values_start;
             }
             else
             {
-                // if params were JSON object, that's the end of them
-                if(info->data->request[curr_pos] == '}')
-                {
-                    curr_pos = params_end-1; // to exit the loop..
-                    break;
-                }
-                curr_param_no++;
-                curr_pos++;
-                while(info->data->request[curr_pos] == ' ' ||
-                     info->data->request[curr_pos] == ','  ) // skip comma and white space
-                {
-                    curr_pos++;
-                }
-                curr_param_start = curr_pos;
-            }
-            break;
-
-        default:
-            // by default (it might not end up with space, comma or bracket)
-            // assume it starts at curr_start and ends at curr_pos+1
-            if(param_no_zero_based == curr_param_no &&
-               curr_pos > curr_param_start)
-            {
-                result = info->data->request + curr_param_start;
-                *str_length = curr_pos + 1 - curr_param_start;
+                *str_length = 0;
             }
             break;
         }
-        curr_pos++;
+        curr_param_no++;
     }
     return result;
 }
@@ -655,22 +611,49 @@ static void reset_token_info(rpc_token_info_t* info)
     info->values_end = -1;
 }
 
-enum parsing_flags
+static int skip_all_of(const char* input, int start_at, const char* values, char reversed)
 {
-    flag_none = 0,
-    flag_in_array = 1,
-    flag_in_object = 2
-};
+    int size = str_len(values);
+    int i = 0;
+    char found = 0;
+    do
+    {
+        for(i = 0; i < size; i++)
+        {
+            found = 0;
+            if(input[start_at] == values[i])
+            {
+                if(reversed)
+                {
+                    --start_at;
+                    if(start_at < 0)
+                    {
+                        return start_at;
+                    }
+                }
+                else
+                {
+                    ++start_at;
+                }
+                found = 1;
+                break;
+            }
+        }
+    }
+    while(found);
+    return start_at;
+}
+
 
 static int find_next_object(int start_from, const char* input, struct rpc_token_info* info)
 {
     int curr_pos = start_from;
     int max_len = str_len(input);
-    unsigned int flags = flag_none;
     char curr;
+
     reset_token_info(info);
 
-    // find the object name (starts with ", ends with " and :
+    // find a name of the key in this object (starts with ", ends with " and :
     while(curr_pos < max_len)
     {
         curr = input[curr_pos];
@@ -692,6 +675,22 @@ static int find_next_object(int start_from, const char* input, struct rpc_token_
         }
         curr_pos++;
     }
+    return find_next_value(curr_pos, input, info);
+}
+
+static int find_next_value(int start_from, const char* input, struct rpc_token_info* info)
+{
+    int curr_pos = start_from;
+    int max_len = str_len(input);
+
+    int in_quotes = 0;
+    int in_object = 0;
+    int in_array = 0;
+    char curr;
+
+    curr_pos = skip_all_of(input, curr_pos, "\n\t :", 0); // whitespace & colon: we'll be searching for a value
+    info->values_start = curr_pos;
+    info->values_end = -1;
 
     // find value(s) for this object
     while(curr_pos < max_len)
@@ -699,49 +698,76 @@ static int find_next_object(int start_from, const char* input, struct rpc_token_
         curr = input[curr_pos];
         switch(curr)
         {
-        case ':':
-            while(input[++curr_pos] == ' '); // skip spaces
-            if(!(flags & flag_in_object))
-            {
-                info->values_start = curr_pos;
-            }
+        case '\"':
+            in_quotes = ~in_quotes;
+            curr_pos++;
             continue;
 
         case '[':
-            flags |= flag_in_array;
+            if(!in_quotes)
+            {
+                in_array++;
+            }
             curr_pos++;
             continue;
 
         case '{':
-            flags |= flag_in_object;
+            if(!in_quotes)
+            {
+                in_object++;
+            }
             curr_pos++;
             continue;
 
         case ']':
-            flags &= ~flag_in_array;
             curr_pos++;
+            if(!in_quotes)
+            {
+                in_array--;
+                if(in_array <= 0)
+                {
+                    if(!in_object)
+                    {
+                        info->values_end = curr_pos;
+                        break;
+                    }
+                }
+            }
             continue;
 
         case '}':
-            flags &= ~flag_in_object;
             curr_pos++;
+            if(!in_quotes)
+            {
+                in_object--;
+                if(in_object <= 0)
+                {
+                    if(!in_array)
+                    {
+                        info->values_end = curr_pos;
+                        break;
+                    }
+                }
+            }
             continue;
         }
 
-        if( flags == flag_none &&
-            (curr == ',' ||
-             curr == '}'))
+         if(info->values_end > 0 ||
+            ( curr == ',' && !in_object && !in_array && !in_quotes ))
         {
-            info->values_end = curr_pos;
-            curr_pos++;
-            break;
+             // in_object or in_array will have negative values if a whole object and / or array
+             // was extracted, so adjust for this
+             info->values_end = curr_pos + in_object + in_array;
+             curr_pos++;
+             break;
         }
         curr_pos++;
     }
 
-    if(info->values_end < 0)
+    if(input[info->values_start] == '\"' && input[info->values_end-1] == '\"')
     {
-        info->values_end = max_len;
+        info->values_start++;
+        info->values_end--;
     }
     return curr_pos;
 }
