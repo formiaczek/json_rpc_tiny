@@ -12,14 +12,19 @@
 
 
 #include <string.h>
-
 #include <iostream>
 #include <sstream>
 #include <ctime>
 
 #include <stdio.h>
 
-int run_tests(json_rpc_instance&);
+void rpc_handling_examples(char** argv);
+void extracting_json_examples();
+void print_all_members_of_object(const std::string& input, int curr_pos, int object_len);
+int run_tests();
+
+
+// ========  example JSON RPC handlers ==========
 
 // does not use any params
 char* getTimeDate(rpc_request_info_t* info)
@@ -35,7 +40,7 @@ char* getTimeDate(rpc_request_info_t* info)
          <<  now->tm_mday
          << "\"";
 
-    return json_rpc_result(res.str().c_str(), info);
+    return json_rpc_create_result(res.str().c_str(), info);
 }
 
 // uses named params
@@ -56,21 +61,20 @@ char* search(rpc_request_info_t* info)
         if(strncmp(last_name, "Python", last_name_len) == 0 &&
            age == 26)
         {
-            res = json_rpc_result("Monty", info);
+            res = json_rpc_create_result("\"Monty\"", info);
         }
         else
         {
-            res = json_rpc_result("none", info);
+            res = json_rpc_create_result("none", info);
         }
     }
     else
     {
         // return json_rpc_error (using error value) on failure
-        res = json_rpc_error(json_rpc_err_invalid_params, info);
+        res = json_rpc_create_error(json_rpc_err_invalid_params, info);
     }
     return res;
 }
-
 
 char* non_20_error_example(rpc_request_info_t* info)
 {
@@ -84,11 +88,11 @@ char* non_20_error_example(rpc_request_info_t* info)
         // manually construct the error code..
         msg << "{\"name\": \"some_error\", ";
         msg << "\"message\": \"SOmething went wrong..\"}";
-        res = json_rpc_error(msg.str().c_str(), info); // and past it as a string
+        res = json_rpc_create_error(msg.str().c_str(), info); // and past it as a string
     }
     else
     {
-        res = json_rpc_result("\"OK\"", info);
+        res = json_rpc_create_result("\"OK\"", info);
     }
     return res;
 }
@@ -102,11 +106,11 @@ char* use_argument(rpc_request_info_t* info)
     if(param)
     {
         msg << "\""<< param << "\"";
-        res = json_rpc_result(msg.str().c_str(), info);
+        res = json_rpc_create_result(msg.str().c_str(), info);
     }
     else
     {
-        res = json_rpc_error(json_rpc_err_internal_error, info);
+        res = json_rpc_create_error(json_rpc_err_internal_error, info);
     }
     return res;
 }
@@ -149,12 +153,12 @@ char* calculate(rpc_request_info_t* info)
             break;
         }
         result << "}";
-        res = json_rpc_result(result.str().c_str(), info);
+        res = json_rpc_create_result(result.str().c_str(), info);
     }
     else
     {
         // return json_rpc_error (using error value) on failure
-        res = json_rpc_error(json_rpc_err_invalid_params, info);
+        res = json_rpc_create_error(json_rpc_err_invalid_params, info);
     }
     return res;
 }
@@ -177,15 +181,15 @@ char* ordered_params(rpc_request_info_t* info)
     {
         std::stringstream s;
         s << "{\"first\": " << first << ", ";
-        s << "\"second\": " << std::string(second, second_len) << ", ";
+        s << "\"second\": \"" << std::string(second, second_len) << "\", ";
         s << "\"third\": " << third << "}";
 
-        res = json_rpc_result(s.str().c_str(), info);
+        res = json_rpc_create_result(s.str().c_str(), info);
     }
     else
     {
         // return json_rpc_error (using error value) on failure
-        res = json_rpc_error(json_rpc_err_invalid_params, info);
+        res = json_rpc_create_error(json_rpc_err_invalid_params, info);
     }
     return res;
 }
@@ -209,9 +213,8 @@ char* handleMessage(rpc_request_info_t* info)
     // note : don't change response directly: using json_rpc_result() or json_rpc_error()
     // you can update response data with required data (and JSON tags will be appended
     // automatically
-    return json_rpc_result("OK", info);
+    return json_rpc_create_result("OK", info);
 }
-
 
 char* send_back(rpc_request_info_t* info)
 {
@@ -222,21 +225,21 @@ char* send_back(rpc_request_info_t* info)
     {
         std::string message(msg, len);
         message = "{\"res\": \"" + message + "\"}";
-        res = json_rpc_result(message.c_str(), info);
+        res = json_rpc_create_result(message.c_str(), info);
     }
     else
     {
-        res = json_rpc_error(json_rpc_err_invalid_params, info);
+        res = json_rpc_create_error(json_rpc_err_invalid_params, info);
     }
     return res;
 }
 
-
+// ====  example JSON RPC requests ==
 const char* example_requests[] =
 {
  "{\"jsonrpc\": \"2.0\", \"method\": \"getTimeDate\", \"params\": none, \"id\": 123}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"helloWorld\", \"params\": [\"Hello World\"], \"id\": 32}",
- "{\"method\": \"search\", \"params\": [{\"last_name\": \"Python\"}, {\"age\": 26}], \"id\": 32}",
+ "{\"method\": \"search\", \"params\": [{\"last_name\": \"Python\", \"age\": 26}], \"id\": 32}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_n\": \"Python\"}], \"id\": 33}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_name\": \"Doe\"}], \"id\": 34}",
  "{\"jsonrpc\": \"2.0\", \"thod\": \"search\", ", // not valid
@@ -255,17 +258,28 @@ const char* example_requests[] =
 const int num_of_examples = sizeof(example_requests)/sizeof(char*);
 
 
-// define our storage:
+
+int main(int argc, char** argv)
+{
+    rpc_handling_examples(argv); // examples on how tho register handlers, parse requests and responses.
+
+    extracting_json_examples(); // examples on how to traverse (and extract all members of) a JSON object
+
+    return run_tests();  // sanity tests. Note that they depend on some examples defined above..
+}
+
+
+// define our storage  (C-style) (*can also be allocated dynamically)
 #define MAX_NUM_OF_HANDLERS 32
 json_rpc_handler_t storage_for_handlers[MAX_NUM_OF_HANDLERS];
 
 #define RESPONSE_BUF_MAX_LEN  128
 char response_buffer[RESPONSE_BUF_MAX_LEN];
 
-int main(int argc, char **argv)
+void rpc_handling_examples(char** argv)
 {
-    // create and initialise instance
-    json_rpc_instance rpc;
+    // create and initialise the instance
+    json_rpc_instance_t rpc;
     json_rpc_init(&rpc, storage_for_handlers, MAX_NUM_OF_HANDLERS);
 
     // register our handlers
@@ -297,43 +311,141 @@ int main(int argc, char **argv)
         std::cout << "\n" << i << ": " << "\n--> " << example_requests[i];
         std::cout << "\n<-- " << res_str << "\n"; //json_rpc_handle_request(&rpc, &req);
 
-        // try to extract response params and print them
+        // try to extract response and print it (see extracting_json_examples() for more on extracting)
         if(res_str)
         {
-            rpc_request_info_t info;
-            json_rpc_data_t r_data; // (could re-use req_data )
-            if(json_rpc_parse_result(res_str, &r_data, &info))
+            int result_len = 0;
+            const char* result_str = json_extract_member_str("result", &result_len, res_str, strlen(res_str));
+            if(result_str)
             {
-                int int_res = -1;
-
-                // extract str params from the response (position based)
-                const char* str_res = NULL;
-                for (int p = 0; p < 3; p++)
+                std::cout << "result was: " << std::string(result_str, result_len) << "\n";
+                for (int i = 0; ; i++)
                 {
-                    str_res = rpc_extract_param_str(p, &int_res, &info);
-                    if(str_res)
+                    int member_val_len = 0;
+                    const char* member_start = json_extract_member_str(i, &member_val_len, result_str, result_len);
+                    if(!member_val_len)
                     {
-                        std::cout << "pos " << p << " str in res: [" << std::string(str_res, int_res) << "]\n";
+                        break;
                     }
-                }
-
-                str_res = rpc_extract_param_str("operation", &int_res, &info);
-                if(rpc_extract_param_str("operation", &int_res, &info))
-                {
-                    std::cout << "named \"operation\" in res: [" << std::string(str_res, int_res) << "]\n";
-                }
-
-                if(rpc_extract_param_int("res", &int_res, &info))
-                {
-                    std::cout << "named \"res\" in res: [" << std::dec << int_res << "]\n";
+                    std::cout << " result [" << i << "]: " << std::string(member_start, member_val_len) << "\n";
                 }
             }
         }
         std::cout << "\n";
     }
-
-    return run_tests(rpc);  // run sanity tests. Note that they depend on some examples defined above..
 }
+
+void extracting_json_examples()
+{
+    std::cout << "\n\n ==== extracting_json_examples ====\n\n";
+    std::string input = "{\"jsonrpc\": \"2.0\", \"method\": \"getTimeDate\", \"params\": none, \"id\": 123}";
+    std::cout << "printing all members of: \n " << input << "\n\n";
+    print_all_members_of_object(input, 0, input.size());
+
+    input = "{[{\"first\": 128, \"second\": 32, \"op\": \"+\"}, {\"jsonrpc\": \"2.0\", \"method\": \"getTimeDate\"}]}";
+    std::cout << "printing all members of: \n " << input << "\n\n";
+    print_all_members_of_object(input, 0, input.size());
+
+    input = "{\"jsonrpc\": \"2.0\", \"method\": \"ordered_params\", \"params\": [128, \"the string\", 0x100], \"id\": 40}";
+    std::cout << "\n---\nprinting all members of: \n " << input << "\n\n";
+    print_all_members_of_object(input, 0, input.size());
+
+
+    std::cout << "\n\n ==== finding members by name ====\n";
+    std::string member_name = "jsonrpc";
+    int member_val_len = 0;
+    const char* member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+    member_name = "params";
+    member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+
+    member_name = "method";
+    member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+    member_name = "id";
+    member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+
+    input = "{\"result\": {\"operation\": \"*\", \"res\": 32}, \"error\": none, \"id\": 38}";
+
+    member_name = "result";
+    member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+    member_name = "operation";
+    member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+    member_name = "res";
+    member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+    member_name = "operation";
+    member_start = json_extract_member_str(member_name.c_str(), &member_val_len, input.c_str(), input.size());
+    std::cout << member_name << " (found by name): " << std::string(member_start, member_val_len) << "\n";
+
+    std::cout << "\n\n ==== finding members by number (order) ==== \n";
+
+    input = "{{\"first\": 128, \"second\": 32, \"op\": \"+\"}, {\"jsonrpc\": \"2.0\", \"method\": \"getTimeDate\"}}";
+    std::cout << "JSON object: \n" << input << "\n\n";
+    for (int i = 0; ; i++)
+    {
+        member_start = json_extract_member_str(i, &member_val_len, input.c_str(), input.size());
+        if(!member_val_len)
+        {
+            break;
+        }
+        std::cout << " member #" << i << ": " << std::string(member_start, member_val_len) << "\n";
+    }
+
+    input = example_requests[3];
+    std::cout << "\n\nJSON object: \n" << input << "\n\n";
+    for (int i = 0; ; i++)
+    {
+        member_start = json_extract_member_str(i, &member_val_len, input.c_str(), input.size());
+        if(!member_val_len)
+        {
+            break;
+        }
+        std::cout << " member #" << i << ": " << std::string(member_start, member_val_len) << "\n";
+    }
+
+    std::cout << "\n\n ==== extracting_json_examples (end) ====\n\n";
+}
+
+// example function to show how to print recursively all sub-objects / lists within a JSON object
+void print_all_members_of_object(const std::string& input, int curr_pos, int object_len)
+{
+    json_token_info info;
+    std::cout << "=> inside next sub-obj\n";
+    int object_pos_max_within_input = curr_pos + object_len;
+
+    while(true)
+    {
+        curr_pos = json_find_next_member(curr_pos, input.c_str(), object_pos_max_within_input, &info);
+        if(info.values_len == 0)
+        {
+            break;
+        }
+        std::cout << "next member is: ->";
+        std::cout << input.substr(info.name_start, info.name_len);
+        std::cout << "<- value (at: " << info.values_start << ", len: " << info.values_len << "): ";
+        std::cout << input.substr(info.values_start, info.values_len) << "\n";
+
+        if(json_next_member_is_object_or_list(input.c_str(), &info))
+        {
+            print_all_members_of_object(input, info.values_start+1, info.values_len);
+        }
+    }
+    std::cout << "<= end of next sub-obj\n";
+}
+
+
 
 // --------------- TEST CODE -----------------------------------
 
@@ -343,6 +455,7 @@ int main(int argc, char **argv)
                                   s << " " << #_cond_ << "\n"; \
                                   throw std::runtime_error(s.str()); } })
 
+// helper method: executes JSON rpc given example number and returns the response
 const char*  handle_request_for_example(int example_number, json_rpc_data_t& req_data, json_rpc_instance& rpc)
 {
     req_data.request = example_requests[example_number];
@@ -352,61 +465,57 @@ const char*  handle_request_for_example(int example_number, json_rpc_data_t& req
 
 
 template <typename ParamType>
-int extract_int_param(ParamType param_name_or_pos, const char* res_str)
+int extract_int_param(ParamType param_name_or_pos, const std::string& res_str)
 {
     int int_res = -1;
-    rpc_request_info_t info;
-    json_rpc_data_t r_data;
-    if(json_rpc_parse_result(res_str, &r_data, &info))
+    if(!json_extract_member_int(param_name_or_pos, &int_res, res_str.c_str(), res_str.length()))
     {
-        if(!rpc_extract_param_int(param_name_or_pos, &int_res, &info))
-        {
-            std::stringstream err;
-            err << __FUNCTION__ << " error extracting param: " << param_name_or_pos;
-            err << " from: " << res_str << "\n";
-        }
+        std::stringstream err;
+        err << __FUNCTION__ << " error extracting param: " << param_name_or_pos;
+        err << " from: " << res_str << "\n";
+        throw std::runtime_error(err.str());
     }
     return int_res;
 }
 
 template <typename ParamType>
-std::string extract_str_param(ParamType param_name_or_pos, const char* res_str)
+std::string extract_str_param(ParamType param_name_or_pos, const std::string& res_str)
 {
-    std::string result;
-    rpc_request_info_t info;
-    json_rpc_data_t r_data;
-    if(json_rpc_parse_result(res_str, &r_data, &info))
-    {
-        int str_size = 0;
-        const char* str_res = rpc_extract_param_str(param_name_or_pos, &str_size, &info);
-        if(str_res)
-        {
-            result.clear();
-            result.insert(0, str_res, str_size);
-        }
-        else
-        {
-            std::stringstream err;
-            err << __FUNCTION__ << " error extracting param: " << param_name_or_pos;
-            err << " from: " << res_str << "\n";
-        }
-    }
-    return result;
+    int str_size = 0;
+    const char* str_res = json_extract_member_str(param_name_or_pos, &str_size, res_str.c_str(), res_str.length());
+    return std::string(str_res, str_size);
 }
 
-int run_tests(json_rpc_instance& rpc)
+int run_tests()
 {
+    json_rpc_instance_t rpc;
+    json_rpc_init(&rpc, storage_for_handlers, MAX_NUM_OF_HANDLERS);
+
+    // register our handlers
+    json_rpc_register_handler(&rpc, "handleMessage",  handleMessage);
+    json_rpc_register_handler(&rpc, "getTimeDate",    getTimeDate);
+    json_rpc_register_handler(&rpc, "search",         search);
+    json_rpc_register_handler(&rpc, "err_example",    non_20_error_example);
+    json_rpc_register_handler(&rpc, "use_argument",   use_argument);
+    json_rpc_register_handler(&rpc, "calculate",      calculate);
+    json_rpc_register_handler(&rpc, "ordered_params", ordered_params);
+    json_rpc_register_handler(&rpc, "send_back",      send_back);
+
+
     try
     {
         json_rpc_data_t req_data;
         req_data.response = response_buffer;
         req_data.response_len = RESPONSE_BUF_MAX_LEN;
-        const char* res_str;
+        const char* res_str = NULL;
 
         res_str = handle_request_for_example(2, req_data, rpc);
         TEST_COND_(res_str);
-        TEST_COND_(extract_str_param(0, res_str) == "Monty");
-        TEST_COND_(extract_str_param(1, res_str) == ""); // not existing.
+        TEST_COND_(extract_str_param(0, res_str) == "Monty"); // "result": "Monty"
+        TEST_COND_(extract_str_param(1, res_str) == "none"); // "error": none
+        TEST_COND_(extract_str_param(2, res_str) == "32"); // "id": 32
+        TEST_COND_(extract_int_param(2, res_str) == 32); // "id": 32
+        TEST_COND_(extract_str_param(3, res_str) == ""); // not existing.
 
         res_str = handle_request_for_example(9, req_data, rpc);
         TEST_COND_(res_str);
@@ -423,7 +532,10 @@ int run_tests(json_rpc_instance& rpc)
         TEST_COND_(extract_int_param("first", res_str) == 128);
         TEST_COND_(extract_str_param("second", res_str) == "the string");
         TEST_COND_(extract_int_param("third", res_str) == 256);
-        TEST_COND_(extract_str_param(0, res_str) == "\"first\": 128"); // the whole '0-param' part
+
+        std::string expected = "{\"first\": 128, \"second\": \"the string\", \"third\": 256}";
+        TEST_COND_(extract_str_param(0, res_str) == expected); // the whole '0-param' part
+        TEST_COND_(extract_str_param(1, res_str) == "none"); // "error": none
 
         // tests negative value extraction (hex/dec/oct) etc.
         res_str = handle_request_for_example(13, req_data, rpc);

@@ -61,7 +61,7 @@ typedef struct rpc_request_info
     int params_start;
     int params_len;
     int id_start;
-    unsigned int info_flags; // TODO: add param to be passed to handlers ?
+    unsigned int info_flags;
     json_rpc_data_t* data;
 } rpc_request_info_t;
 
@@ -105,6 +105,18 @@ typedef struct json_rpc_instance
 
 
 /**
+ * @brief Struct containing information about json token (json object).
+ *        It is used to aid extraction / parsing of json objects.
+ */
+typedef struct json_token_info
+{
+    int16_t name_start;
+    int16_t name_len;
+    int16_t values_start;
+    int16_t values_len;
+} json_token_info_t;
+
+/**
  * @brief Enumeration to allow selecting JSON-RPC2.0 error codes.
  */
 enum json_rpc_20_errors
@@ -118,6 +130,8 @@ enum json_rpc_20_errors
 
 
 /* Exported functions ------------------------------------------------------- */
+
+/* RPC specific functions ---------------------------------------------- */
 
 /**
  * @brief initialise rpc instance with a storage for handlers.
@@ -151,7 +165,7 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
 
 
 /**
- * @brief Helper function to create an RPC response. It is designed to be used
+ * @brief Function to create an RPC response. It is designed to be used
  *        in the handler to create RCP response (in the response buffer).
  *        This function will either fill out the buffer with a valid response, or null-terminate
  *        it at it's beginning for notification, so there is no need to check that in the handler.
@@ -159,11 +173,11 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
  * @param result_str string (null terminated!) to be copied to the response.
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  */
-char* json_rpc_result(const char* result_str, rpc_request_info_t* info);
+char* json_rpc_create_result(const char* result_str, rpc_request_info_t* info);
 
 
 /**
- * @brief Helper function to create an RPC error response. It is designed to be used
+ * @brief Function to create an RPC error response. It is designed to be used
  *        in the handler to create RCP response (in the response buffer).
  *        This function will either fill out the buffer with a valid error response, or null-terminate
  *        it at it's beginning for notification, so there is no need to check that in the handler.
@@ -171,11 +185,11 @@ char* json_rpc_result(const char* result_str, rpc_request_info_t* info);
  * @param error_code - one of json_20_errors. Error will be constructed as per JSON_RPC 2.0 definitions.
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  */
-char* json_rpc_error(int err_code, rpc_request_info_t* info);
+char* json_rpc_create_error(int err_code, rpc_request_info_t* info);
 
 
 /**
- * @brief Helper function to create an RPC error response.  It is designed to be used
+ * @brief Function to create an RPC error response.  It is designed to be used
  *        in the handler to create RCP response (in the response buffer).
  *        This function will either fill out the buffer with a valid error response, or null-terminate
  *        it at it's beginning for notification, so there is no need to check that in the handler.
@@ -183,13 +197,13 @@ char* json_rpc_error(int err_code, rpc_request_info_t* info);
  * @param err_msg manually constructed error message string. It will be copied to the RPC response 'as is'.
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  */
-char* json_rpc_error(const char* err_msg, rpc_request_info_t* info);
+char* json_rpc_create_error(const char* err_msg, rpc_request_info_t* info);
 
 
-/* Functions to aid extraction of RPC call parameters (by name and by order) */
+/* Functions to aid extraction of RPC call parameters (by name or order) */
 
 /**
- * @brief Helper function to extract value of a named parameter as string.
+ * @brief Function to extract value of a named member (searching in the 'params' list) as string.
  *        It also can be used to extract parameters of any type (*integer parameters
  *        can be extracted using rpc_extract_param_int) and result can be converted appropriately.
  * @param param_name null-terminated name of the named parameter to extract.
@@ -199,11 +213,11 @@ char* json_rpc_error(const char* err_msg, rpc_request_info_t* info);
  * @returns pointer to a string (within the original request buffer) where the value of
  *          parameter starts, or NULL if parameter is not found.
  */
-const char* rpc_extract_param_str(const char* param_name,  int* str_length, rpc_request_info_t* info);
+const char* rpc_extract_param_str(const char* param_name, int* str_length, rpc_request_info_t* info);
 
 
 /**
- * @brief Helper function to extract value of a named parameter as integer.
+ * @brief Function to extract value of a named member (searching in the 'params' list) as integer.
  *        It works similarly to the 'atoi', but works on the original request buffer
  *        and automatically detects and extracts negative, octal or decimal values.
  * @param param_name null-terminated name of the named parameter to extract.
@@ -212,44 +226,151 @@ const char* rpc_extract_param_str(const char* param_name,  int* str_length, rpc_
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  * @returns non-zero if value was successfully extracted, zero-otherwise.
  */
-int rpc_extract_param_int(const char* param_name,  int* result,     rpc_request_info_t* info);
+int rpc_extract_param_int(const char* param_name, int* result, rpc_request_info_t* info);
 
 
 /**
- * @brief Helper function to extract value of a named parameter as string.
+ * @brief Function to extract value of a named parameter as string.
  *        It also can be used to extract parameters of any type (*integer parameters
  *        can be extracted using rpc_extract_param_int) and result can be converted appropriately.
- * @param param_name null-terminated name of the named parameter to extract.
+ * @param member_no_zero_based zero-based member number.
  * @param str_length (out) Pointer to a variable where length of the string value will
  *        be stored if param is found and successfully extracted.
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  * @returns pointer to a string (within the original request buffer) where the value of
  *          parameter starts, or NULL if parameter is not found.
  */
-const char* rpc_extract_param_str(int param_no_zero_based, int* str_length, rpc_request_info_t* info);
+const char* rpc_extract_param_str(int member_no_zero_based, int* str_length, rpc_request_info_t* info);
 
 
 /**
- * @brief Helper function to extract value of a parameter as integer.
+ * @brief Function to extract value of a parameter as integer.
  *        It works similarly to the 'atoi', but works on the original request buffer
  *        and automatically detects and extracts negative, octal or decimal values.
- * @param param_no_zero_based Number of the parameter to be converted (zero-based).
+ * @param member_no_zero_based Number of the member to be converted (zero-based).
  * @param result (out) Pointer to a variable where extracted value will be
  *        be stored if param is found and successfully extracted.
  * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
  * @returns non-zero if value was successfully extracted, zero-otherwise.
  */
-int rpc_extract_param_int(int param_no_zero_based, int* result, rpc_request_info_t* info);
+int rpc_extract_param_int(int member_no_zero_based, int* result, rpc_request_info_t* info);
+
+
+/* generic JSON extraction functions ---------------------------------------------- */
+
+/**
+ * @brief Function to find the first position within the next object in the parsed input.
+ *        (i.e. to forward/move to the beginning of the next object).
+ * @param start_from Offset at which parsing should start within the input.
+ * @param input Input string.
+ * @param input_len length of the input.
+ * @returns new offset (position) at which next object has been found.
+ *          If input does not contain any object,
+ *          start_from is returned (as assumption that we're in the object already).
+ */
+int json_begining_of_next_object(int start_from, const char* input, int input_len);
 
 
 /**
- * @brief Helper function to process result form a JSON response.
- * @param result_str Pointer to a result string (zero-terminated).
- * @param req_data Number of the parameter to be converted (zero-based).
- * @param info pointer to the rpc_request_info_t structure.
- * @returns non-zero if results were successfully parsed, zero-otherwise.
+ * @brief Function to extract name and value of a next member within a json string.
+ *        It is assumed that the input is null-terminated, and it's length will be calculated.
+ * @param start_from offset at which parsing should start within the input.
+ * @param input Input string.
+ * @param info pointer to the json_token_info structure where results will be stored.
+ *             As a result, token info will contain offset and length of a name (key) and value.
+ *             If start_from was pointing at the beginning of an object (i.e. '{') or a list ('[')
+ *             value start and length will select the whole object (or list), and name will be empty.
+ *             Similarly - if a value itself was another object or list, values (start,len) will select
+ *             this whole sub-object / list.
+ * @returns new offset (position) at which parsing has been stopped during the search.
  */
-int json_rpc_parse_result(const char* result_str, json_rpc_data_t* req_data, rpc_request_info_t* info);
+int json_find_next_member(int start_from, const char* input, struct json_token_info* info);
+
+/**
+ * @brief Function to extract name and value of a next member within a json string.
+ * @param start_from offset at which parsing should start within the input.
+ * @param input Input string.
+ * @param input_len length of the input.
+ * @param info pointer to the json_token_info structure where results will be stored.
+ * @returns new offset (position) at which parsing has been stopped during the search.
+ */
+int json_find_next_member(int start_from, const char* input, int input_len, struct json_token_info* info);
+
+
+/**
+ * @brief Function to extract the member of a given name (value) from the input containing JSON string.
+ *        Object/list boundaries are crossed during the search (i.e. the whole JSON is inspected).
+ * @param member_name zero-terminated name of the member to find.
+ * @param str_length pointer to a variable where the members length is stored (if found).
+ * @param input Input string.
+ * @param input_len length of the input.
+ * @returns on success: pointer set to the beginning of values of a member
+ *               and str_length is updated with its size.
+ *          on failure: NULL (and str_length is also set to 0).
+ */
+const char* json_extract_member_str(const char* member_name, int* str_length, const char* input, int input_len);
+
+
+/**
+ * @brief Function to extract the member of a given number (i.e. as ordered by number of members) (value).
+ *        from the input containing JSON string.
+ * @param member_no_zero_based zero-terminated number of the member to find in current object / list.
+ * @param str_length pointer to a variable where length of value for this member is stored (if found).
+ * @param input Input string.
+ * @param input_len length of the input.
+ * @returns on success: pointer set to the beginning of values of a member
+ *               and str_length is updated with its size.
+ *          on failure: NULL (and str_length is also set to 0).
+ */
+const char* json_extract_member_str(int member_no_zero_based, int* str_length, const char* input, int input_len);
+
+
+/**
+ * @brief Function to extract value of a named member as an integer.
+ *        It works similarly to the 'atoi', but works on the original request buffer
+ *        and automatically detects and extracts negative, octal or decimal values.
+ *        It searches throughout the whole input JSON (passing any object/list boundaries).
+ * @param member_name null-terminated name of the named member to extract.
+ * @param result (out) Pointer to a variable where extracted value will be be stored (if found).
+ * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
+ * @returns non-zero (bool) if value was successfully extracted, zero-otherwise.
+ */
+int json_extract_member_int(const char* member_name, int* result, const char* input, int input_len);
+
+
+/**
+ * @brief Function to extract value of an ordered member as an integer.
+ *        It works similarly to the 'atoi', but works on the original request buffer
+ *        and automatically detects and extracts negative, octal or decimal values.
+ *        It searches throughout the highest-level JSON object in the given input
+ * @param member_name null-terminated name of the named member to extract.
+ * @param result (out) Pointer to a variable where extracted value will be be stored (if found).
+ * @param info pointer to the rpc_request_info_t structure that was passed to the handler.
+ * @returns non-zero (bool) if value was successfully extracted, zero-otherwise.
+ */
+int json_extract_member_int(int member_no_zero_based, int* result, const char* input, int input_len);
+
+/**
+ * @brief Function to check if member pointed by info token is an object.
+ */
+int json_next_member_is_object(const char* input, struct json_token_info* info);
+
+/**
+ * @brief Function to check if member pointed by info token is a list.
+ */
+int json_next_member_is_list(const char* input, struct json_token_info* info);
+
+/**
+ * @brief Function to check if member pointed by info token is an object.
+ */
+int json_next_member_is_object(const char* input, struct json_token_info* info);
+
+/**
+ * @brief Function to check if member pointed by info token is either object or list.
+ */
+int json_next_member_is_object_or_list(const char* input, struct json_token_info* info);
+
+
 
 
 #endif /* JSON_RPC_TINY */

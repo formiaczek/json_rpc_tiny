@@ -32,7 +32,6 @@
 #include "json_rpc_tiny.h"
 
 
-
 /* Private types and definitions ------------------------------------------------------- */
 
 static const char* response_1x_prefix = "{";
@@ -56,14 +55,6 @@ json_rpc_error_code_t json_rpc_err_codes[] =
     {"-32603", "Internal error"  }    /* Internal JSON-RPC error */
 };
 
-typedef struct rpc_token_info
-{
-    int16_t obj_name_start;
-    int16_t obj_name_end;
-    int16_t values_start;
-    int16_t values_end;
-} rpc_token_info_t;
-
 static json_rpc_handler_t obj_names[] =
 {
     {0, "jsonrpc"},
@@ -81,7 +72,8 @@ enum obj_name_ids
     method,
     params,
     request_id,
-    the_result
+    the_result,
+    the_error
 };
 
 enum request_info_flags
@@ -96,14 +88,14 @@ static const int num_of_obj_names = sizeof(obj_names)/sizeof(obj_names[0]);
 /* Private function declarations ------------------------------------------------------- */
 static int str_len(const char* str);
 static char* append_str(char* to, const char* from);
-static int str_are_equal(const char* first, const char* second);
+static int str_are_equal(const char* first, const char* second_zero_ended);
+static int str_are_equal(const char* first, int first_len, const char* second_zero_ended);
 static int int_val(char symbol, int* result);
 static int convert_to_int(const char* start, int length, int* result);
-static int find_next_value(int start_from, const char* input, struct rpc_token_info* info);
-static int find_next_object(int start_from, const char* input, struct rpc_token_info* info);
-static void reset_token_info(rpc_token_info_t* info);
-static int get_obj_id(const char* input, rpc_token_info_t* info);
-static int get_fcn_id(json_rpc_instance_t* self, const char* input, rpc_token_info_t* info);
+static int json_find_member_value(int start_from, const char* input, struct json_token_info* info);
+static void reset_token_info(json_token_info_t* info);
+static int get_obj_id(const char* input, json_token_info_t* info);
+static int get_fcn_id(json_rpc_instance_t* self, const char* input, json_token_info_t* info);
 static int name_to_id(const char* name, json_rpc_instance* table);
 static int skip_all_of(const char* input, int start_at, const char* values, char reversed);
 
@@ -138,7 +130,7 @@ void json_rpc_register_handler(json_rpc_instance_t* self, const char* fcn_name, 
 char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* request_data)
 {
     char* res = 0;
-    rpc_token_info_t token_info;
+    json_token_info_t token_info;
     rpc_request_info_t request_info;
 
     int curr_pos = 0;
@@ -149,14 +141,12 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
     request_info.id_start = -1;
     request_info.data = request_data;
 
-    while(curr_pos < request_data->request_len && request_data->request[curr_pos] != '{')
-    {
-        curr_pos++; // move past any whitespace/quotes and other..
-    }
+    curr_pos = skip_all_of(request_data->request, curr_pos, "{", 0);
+
     while(curr_pos < request_data->request_len)
     {
-        curr_pos = find_next_object(curr_pos, request_data->request, &token_info);
-        if (token_info.obj_name_start > 0)
+        curr_pos = json_find_next_member(curr_pos, request_data->request, &token_info);
+        if (token_info.name_start > 0)
         {
             obj_id = get_obj_id(request_data->request, &token_info);
             switch (obj_id)
@@ -174,7 +164,7 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
 
                 case params:
                     request_info.params_start = token_info.values_start;
-                    request_info.params_len = token_info.values_end - token_info.values_start;
+                    request_info.params_len = token_info.values_len;
                     break;
 
                 case request_id:
@@ -182,7 +172,7 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
                        !str_are_equal(request_data->request + token_info.values_start, "null"))
                     {
                         request_info.info_flags &= ~rpc_request_is_notification;
-                        request_info.id_start = token_info.obj_name_start; // mark start of the whole "id": ...
+                        request_info.id_start = token_info.name_start; // mark start of the whole "id": ...
                     }
                     break;
             }
@@ -193,16 +183,16 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
     {
         if(fcn_id == -1)
         {
-            res = json_rpc_error(json_rpc_err_method_not_found, &request_info);
+            res = json_rpc_create_error(json_rpc_err_method_not_found, &request_info);
         }
         else
         {
-            res = json_rpc_error(json_rpc_err_invalid_request, &request_info);
+            res = json_rpc_create_error(json_rpc_err_invalid_request, &request_info);
         }
     }
     else if(request_info.params_start < 0)
     {
-        res = json_rpc_error(json_rpc_err_invalid_request, &request_info);
+        res = json_rpc_create_error(json_rpc_err_invalid_request, &request_info);
     }
     else
     {
@@ -212,136 +202,41 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
     return res;
 }
 
+
 const char* rpc_extract_param_str(const char* param_name, int* str_length, rpc_request_info_t* info)
 {
-    const char* result = 0;
-    rpc_token_info_t token_info;
-    int curr_pos = info->params_start;
-    *str_length = 0;
-
-    // skip whitespace and opening brackets..
-    curr_pos = skip_all_of(info->data->request, curr_pos, " \t{[\n\r", 0);
-
-    while(curr_pos < info->data->request_len)
-    {
-        curr_pos = find_next_object(curr_pos, info->data->request, &token_info);
-        if (token_info.obj_name_start > 0)
-        {
-            if(str_are_equal(info->data->request + token_info.obj_name_start+1, param_name))
-            {
-                result = info->data->request + token_info.values_start;
-                *str_length = token_info.values_end - token_info.values_start;
-                break;
-            }
-        }
-    }
-    return result;
+    return json_extract_member_str(param_name, // just find a member, but narrow-down the search to params
+                                   str_length,
+                                   info->data->request+info->params_start,
+                                   info->params_len);
 }
+
 
 int rpc_extract_param_int(const char* param_name, int* result, rpc_request_info_t* info)
 {
-    int extracted_ok = 0;
-    int param_val_str_len = 0;
-
-    const char* p  = rpc_extract_param_str(param_name, &param_val_str_len, info);
-
-    if(p && param_val_str_len)
-    {
-        if(convert_to_int(p, param_val_str_len, result))
-        {
-            extracted_ok = 1;
-        }
-    }
-    return extracted_ok;
+    return json_extract_member_int(param_name,
+                                   result,
+                                   info->data->request+info->params_start,
+                                   info->params_len);
 }
 
-const char* rpc_extract_param_str(int param_no_zero_based, int* str_length, rpc_request_info_t* info)
+
+const char* rpc_extract_param_str(int member_no_zero_based, int* str_length, rpc_request_info_t* info)
 {
-    const char* result = 0;
-    int curr_pos = info->params_start;
-    int params_end = info->params_start + info->params_len;
-    int curr_param_no = 0;
-
-    *str_length = 0; // on error - return 0 as length (default)
-
-    // skip whitespace and opening brackets..
-    curr_pos = skip_all_of(info->data->request, curr_pos, " \t{[\n\r", 0);
-
-    rpc_token_info next_val_info;
-    reset_token_info(&next_val_info);
-
-    // extract values one-by-one until curr_param_no matches..
-    while(curr_pos < params_end)
-    {
-        curr_pos = find_next_value(curr_pos, info->data->request, &next_val_info);
-        if(curr_param_no == param_no_zero_based)
-        {
-            *str_length = next_val_info.values_end - next_val_info.values_start;
-            if(*str_length > 0)
-            {
-                result = info->data->request + next_val_info.values_start;
-            }
-            else
-            {
-                *str_length = 0;
-            }
-            break;
-        }
-        curr_param_no++;
-    }
-    return result;
+    return json_extract_member_str(member_no_zero_based, str_length,
+                                   info->data->request + info->params_start,
+                                   info->params_len);
 }
 
-int rpc_extract_param_int(int param_no_zero_based, int* result, rpc_request_info_t* info)
+int rpc_extract_param_int(int member_no_zero_based, int* result, rpc_request_info_t* info)
 {
-    int extracted_ok = 0;
-    int param_val_str_len = 0;
-
-    const char* p  = rpc_extract_param_str(param_no_zero_based, &param_val_str_len, info);
-
-    if(p && param_val_str_len)
-    {
-        if(convert_to_int(p, param_val_str_len, result))
-        {
-            extracted_ok = 1;
-        }
-    }
-    return extracted_ok;
+    return json_extract_member_int(member_no_zero_based,
+                                   result,
+                                   info->data->request+info->params_start,
+                                   info->params_len);
 }
 
-int json_rpc_parse_result(const char* result_str,
-                          json_rpc_data_t* req_data,
-                          rpc_request_info_t* info)
-{
-    int extracted_ok = 0;
-    int result_str_len = str_len(result_str);
-    int curr_pos = 0;
-    int obj_id = -1;
-    rpc_token_info_t token_info;
-    req_data->request = result_str; // use response as request now, so that we could parse it..
-    req_data->request_len = str_len(result_str); // when extracting params
-    info->data = req_data;
-
-    while(curr_pos < result_str_len)
-    {
-        curr_pos = find_next_object(curr_pos, result_str, &token_info);
-        if(token_info.obj_name_start > 0)
-        {
-            obj_id = get_obj_id(result_str, &token_info);
-            if(obj_id == the_result)
-            {
-                info->params_start = token_info.values_start;
-                info->params_len = token_info.values_end - token_info.values_start;
-                extracted_ok = 1;
-                break;
-            }
-        }
-    }
-    return extracted_ok;
-}
-
-
-char* json_rpc_result(const char* result_str, rpc_request_info_t* info)
+char* json_rpc_create_result(const char* result_str, rpc_request_info_t* info)
 {
     char* buf = info->data->response;
     if(!(info->info_flags & rpc_request_is_notification))
@@ -364,7 +259,7 @@ char* json_rpc_result(const char* result_str, rpc_request_info_t* info)
         if(info->id_start > 0)
         {
             buf = append_str(buf, ", ");
-            buf = append_str(buf, info->data->request + info->id_start); // the rest of request, which is ID
+            buf = append_str(buf, info->data->request + info->id_start-1); // ID (with quotes) + rest of request
         }
         else
         {
@@ -375,7 +270,7 @@ char* json_rpc_result(const char* result_str, rpc_request_info_t* info)
     return info->data->response;
 }
 
-char* json_rpc_error(int err, rpc_request_info_t* info)
+char* json_rpc_create_error(int err, rpc_request_info_t* info)
 {
     char* buf = info->data->response;
     if(!(info->info_flags & rpc_request_is_notification))
@@ -407,7 +302,7 @@ char* json_rpc_error(int err, rpc_request_info_t* info)
     return info->data->response;
 }
 
-char* json_rpc_error(const char* err_msg, rpc_request_info_t* info)
+char* json_rpc_create_error(const char* err_msg, rpc_request_info_t* info)
 {
     char* buf = info->data->response;
     if(!(info->info_flags & rpc_request_is_notification))
@@ -436,8 +331,317 @@ char* json_rpc_error(const char* err_msg, rpc_request_info_t* info)
     return info->data->response;
 }
 
+int json_begining_of_next_object(int start_from, const char* input, int input_len)
+{
+    int next_obj_start = start_from;
+    while(start_from < input_len)
+    {
+        if(input[start_from] == '{' || input[start_from] == '[')
+        {
+            next_obj_start = start_from;
+            break;
+        }
+        start_from++;
+    }
+    return next_obj_start;
+}
+
+int json_find_next_member(int start_from, const char* input, struct json_token_info* info)
+{
+    return json_find_next_member(start_from, input, str_len(input), info);
+}
+
+int json_find_next_member(int start_from, const char* input, int input_len, struct json_token_info* info)
+{
+    int curr_pos = start_from;
+    reset_token_info(info);
+    if(curr_pos >= input_len)
+    {
+        return input_len;
+    }
+
+    curr_pos = skip_all_of(input, curr_pos, " \n\t", 0);
+    if(curr_pos >= input_len)
+    {
+        return input_len;
+    }
+
+    if(input[curr_pos] != '{' && input[curr_pos] != '[') // if it's an object, get it as a value
+    {
+        start_from = curr_pos; // re-use start_from variable
+        while(start_from < input_len)
+        {
+            start_from++;
+            if(input[start_from] == ':')
+            {
+                // ok, found member name (a.k.a key)
+                info->name_start = curr_pos; // assume start was beginning found above
+                info->name_start = skip_all_of(input, info->name_start, "\"", 0); // strip begin
+                curr_pos = start_from + 1;   // move curr past what we've parsed already
+                start_from = skip_all_of(input, start_from, " :\"", 1); // strip end
+                info->name_len = start_from - info->name_start + 1;
+                break;
+            }
+            if(input[start_from] == ',') // also skip if it appears to be ordered param
+            {
+                break;
+            }
+        }
+    }
+    return json_find_member_value(curr_pos, input, info);
+}
+
+const char* json_extract_member_str(const char* member_name, int* str_length, const char* input, int input_len)
+{
+    const char* result = 0;
+    json_token_info_t token_info;
+    int curr_pos = 0;
+    reset_token_info(&token_info);
+    *str_length = 0; // on error - return 0 as length (default)
+
+    while(true)
+    {
+        curr_pos = json_find_next_member(curr_pos,
+                                         input,
+                                         input_len,
+                                         &token_info);
+        if(!token_info.values_len)
+        {
+            break;
+        }
+        else
+        {
+            if(str_are_equal(input+token_info.name_start, token_info.name_len, member_name))
+            {
+                *str_length = token_info.values_len;
+                result = input + token_info.values_start;
+                break;
+            }
+        }
+
+        if(json_next_member_is_object_or_list(input, &token_info))
+        {
+            curr_pos = token_info.values_start+1; // move past objects/list boundaries
+        }
+    };
+    return result;
+}
+
+const char* json_extract_member_str(int member_no_zero_based, int* str_length, const char* input, int input_len)
+{
+    const char* result = 0;
+    json_token_info_t token_info;
+    int curr_param_no = 0;
+    int curr_pos = 0;
+
+    *str_length = 0; // on error - return 0 as length (default)
+
+    reset_token_info(&token_info);
+    token_info.values_len = input_len;
+    if(json_next_member_is_object_or_list(input, &token_info)) // if it's object or list, enter..
+    {
+        curr_pos = token_info.values_start+1; // move past the list begin
+    }
+
+    while(true)
+    {
+        curr_pos = json_find_next_member(curr_pos,
+                                         input,
+                                         input_len,
+                                         &token_info);
+        if(!token_info.values_len)
+        {
+            break;
+        }
+        else
+        {
+            if(curr_param_no == member_no_zero_based)
+            {
+                *str_length = token_info.values_len;
+                result = input + token_info.values_start;
+                break;
+            }
+            curr_param_no++;
+        }
+    };
+    return result;
+}
+
+int json_extract_member_int(const char* member_name, int* result, const char* input, int input_len)
+{
+    int extracted_ok = 0;
+    int result_str_len = 0;
+    const char* p  = json_extract_member_str(member_name, &result_str_len, input, input_len);
+    if(p && result_str_len)
+    {
+        if(convert_to_int(p, result_str_len, result))
+        {
+            extracted_ok = 1;
+        }
+    }
+    return extracted_ok;
+}
+
+int json_extract_member_int(int member_no_zero_based, int* result, const char* input, int input_len)
+{
+    int extracted_ok = 0;
+    int result_str_len = 0;
+    const char* p  = json_extract_member_str(member_no_zero_based, &result_str_len, input, input_len);
+    if(p && result_str_len)
+    {
+        if(convert_to_int(p, result_str_len, result))
+        {
+            extracted_ok = 1;
+        }
+    }
+    return extracted_ok;
+}
+
+int json_next_member_is_object(const char* input, struct json_token_info* info)
+{
+    int is_object = 0;
+    if(info->values_len > 0)
+    {
+        if(input[info->values_start] == '{' &&
+           input[info->values_start+info->values_len-1] == '}')
+        {
+            is_object = 1;
+        }
+    }
+    return is_object;
+}
+
+int json_next_member_is_list(const char* input, struct json_token_info* info)
+{
+    int is_list = 0;
+    if(info->values_len > 0)
+    {
+        if(input[info->values_start] == '[' &&
+           input[info->values_start+info->values_len-1] == ']')
+        {
+            is_list = 1;
+        }
+    }
+    return is_list;
+}
+
+int json_next_member_is_object_or_list(const char* input, struct json_token_info* info)
+{
+    int is_object = 0;
+    if(info->values_len > 0)
+    {
+        if( (input[info->values_start] == '{' &&
+             input[info->values_start+info->values_len-1] == '}')  ||
+             (input[info->values_start] == '[' &&
+             input[info->values_start+info->values_len-1] == ']') )
+        {
+            is_object = 1;
+        }
+    }
+    return is_object;
+}
 
 /* Private functions ------------------------------------------------------- */
+static int json_find_member_value(int start_from, const char* input, struct json_token_info* info)
+{
+    int curr_pos = start_from;
+    int max_len = str_len(input);
+
+    int in_quotes = 0;
+    int in_object = 0;
+    int in_array = 0;
+    char curr;
+    int values_end = 0;
+
+    curr_pos = skip_all_of(input, curr_pos, "\n\t :", 0); // whitespace & colon: we'll be searching for a value
+    info->values_start = curr_pos;
+
+    // find value(s) for this object
+    while(curr_pos < max_len)
+    {
+        curr = input[curr_pos];
+        switch(curr)
+        {
+        case '\"':
+            in_quotes = ~in_quotes;
+            curr_pos++;
+            continue;
+
+        case '[':
+            if(!in_quotes)
+            {
+                in_array++;
+            }
+            curr_pos++;
+            continue;
+
+        case '{':
+            if(!in_quotes)
+            {
+                in_object++;
+            }
+            curr_pos++;
+            continue;
+
+        case ']':
+            curr_pos++;
+            if(!in_quotes)
+            {
+                in_array--;
+                if(in_array <= 0)
+                {
+                    if(!in_object)
+                    {
+                        values_end = curr_pos;
+                        break;
+                    }
+                }
+            }
+            continue;
+
+        case '}':
+            curr_pos++;
+            if(!in_quotes)
+            {
+                in_object--;
+                if(in_object <= 0)
+                {
+                    if(!in_array)
+                    {
+                        values_end = curr_pos;
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        if(values_end > 0 ||
+          ( curr == ',' && !in_object && !in_array && !in_quotes ))
+        {
+             // in_object or in_array will have negative values if a whole object and / or array
+             // was extracted, so adjust for this
+             values_end = curr_pos + in_object + in_array;
+             curr_pos++;
+             break;
+        }
+        curr_pos++;
+    }
+
+    if(input[info->values_start] == '\"' && input[values_end-1] == '\"')
+    {
+        info->values_start++;
+        values_end--;
+    }
+
+    info->values_start = skip_all_of(input, info->values_start, " \t\n\r", 0);
+    values_end = skip_all_of(input, values_end, " \t\n\r", 1);
+
+
+    info->values_len = (values_end >= info->values_start) ? values_end - info->values_start : 0;
+    return curr_pos;
+}
+
 static int str_len(const char* str)
 {
     // yes yes, the unsafe str_len.. hopefully we'll use it wisely ;)
@@ -458,19 +662,39 @@ static char* append_str(char* to, const char* from)
     return to;
 }
 
-static int str_are_equal(const char* first, const char* second)
+static int str_are_equal(const char* first, const char* second_zero_ended)
 {
     int are_equal = 0;
-    while (*second != 0   && // not the end of string?
-           *first != 0  && // nor end of str
-           *first == *second) // until are equal
+    while (*second_zero_ended != 0   &&  // not the end of string?
+           *first != 0  &&               // nor end of str
+           *first == *second_zero_ended) // until are equal
     {
         first++;
-        second++;
+        second_zero_ended++;
     }
 
-    // here, if we're at the end of second = they match
-    if (*second == 0)
+    // here, if we're at the end of second = they do match
+    if (*second_zero_ended == 0)
+    {
+        are_equal = 1;
+    }
+    return are_equal;
+}
+
+static int str_are_equal(const char* first, int first_len, const char* second_zero_ended)
+{
+    int are_equal = 0;
+    while (*second_zero_ended != 0   &&  // not the end of string?
+           *first != 0  &&    // nor end of str
+           *first == *second_zero_ended) // until are equal
+    {
+        first++;
+        second_zero_ended++;
+        first_len--;
+    }
+
+    // here, if we're at the end of first and second they do match at least at first_len characters.
+    if (*second_zero_ended == 0 && first_len == 0)
     {
         are_equal = 1;
     }
@@ -554,7 +778,6 @@ static int convert_to_int(const char* start, int length, int* result)
     return extracted_ok;
 }
 
-
 static int name_to_id(const char* name, json_rpc_instance* table)
 {
     const char* curr_name = name;
@@ -564,15 +787,15 @@ static int name_to_id(const char* name, json_rpc_instance* table)
     {
         curr_name = name;
         while(*curr_name == '\"')
-            {
+        {
             curr_name++; // skip opening quotes
-            }
+        }
 
         curr_item = table->handlers[i].fcn_name;
 
-        while (*curr_name != 0   && // not the end of string?
+        while (*curr_name != 0   &&  // not the end of string?
                *curr_name != '\"' && // end of word marked by quote
-               *curr_item != 0  && // nor end of handler function name
+               *curr_item != 0  &&   // nor end of handler function name
                *curr_name == *curr_item) // until are equal
         {
             curr_name++;
@@ -588,27 +811,27 @@ static int name_to_id(const char* name, json_rpc_instance* table)
     return i == table->num_of_handlers ? -1 : i; // if not found, return -1
 }
 
-static int get_fcn_id(json_rpc_instance_t* self, const char* input, rpc_token_info_t* info)
+static int get_fcn_id(json_rpc_instance_t* self, const char* input, json_token_info_t* info)
 {
     const char* name = &input[info->values_start];
     return name_to_id(name, self);
 }
 
-static int get_obj_id(const char* input, rpc_token_info_t* info)
+static int get_obj_id(const char* input, json_token_info_t* info)
 {
     json_rpc_instance table;
     table.handlers = (json_rpc_handler_t*)obj_names;
     table.num_of_handlers = num_of_obj_names;
-    const char* name = &input[info->obj_name_start];
+    const char* name = &input[info->name_start];
     return name_to_id(name, &table);
 }
 
-static void reset_token_info(rpc_token_info_t* info)
+static void reset_token_info(json_token_info_t* info)
 {
-    info->obj_name_start = -1;
-    info->obj_name_end = -1;
-    info->values_start = -1;
-    info->values_end = -1;
+    info->name_start = 0;
+    info->name_len = 0;
+    info->values_start = 0;
+    info->values_len = 0;
 }
 
 static int skip_all_of(const char* input, int start_at, const char* values, char reversed)
@@ -643,132 +866,3 @@ static int skip_all_of(const char* input, int start_at, const char* values, char
     while(found);
     return start_at;
 }
-
-
-static int find_next_object(int start_from, const char* input, struct rpc_token_info* info)
-{
-    int curr_pos = start_from;
-    int max_len = str_len(input);
-    char curr;
-
-    reset_token_info(info);
-
-    // find a name of the key in this object (starts with ", ends with " and :
-    while(curr_pos < max_len)
-    {
-        curr = input[curr_pos];
-        if(curr == '\"')
-        {
-            if(info->obj_name_start < 0)
-            {
-                info->obj_name_start = curr_pos;
-                curr_pos++;
-                continue;
-            }
-
-            if(info->obj_name_end < 0)
-            {
-                curr_pos++;
-                info->obj_name_end = curr_pos;
-                break;
-            }
-        }
-        curr_pos++;
-    }
-    return find_next_value(curr_pos, input, info);
-}
-
-static int find_next_value(int start_from, const char* input, struct rpc_token_info* info)
-{
-    int curr_pos = start_from;
-    int max_len = str_len(input);
-
-    int in_quotes = 0;
-    int in_object = 0;
-    int in_array = 0;
-    char curr;
-
-    curr_pos = skip_all_of(input, curr_pos, "\n\t :", 0); // whitespace & colon: we'll be searching for a value
-    info->values_start = curr_pos;
-    info->values_end = -1;
-
-    // find value(s) for this object
-    while(curr_pos < max_len)
-    {
-        curr = input[curr_pos];
-        switch(curr)
-        {
-        case '\"':
-            in_quotes = ~in_quotes;
-            curr_pos++;
-            continue;
-
-        case '[':
-            if(!in_quotes)
-            {
-                in_array++;
-            }
-            curr_pos++;
-            continue;
-
-        case '{':
-            if(!in_quotes)
-            {
-                in_object++;
-            }
-            curr_pos++;
-            continue;
-
-        case ']':
-            curr_pos++;
-            if(!in_quotes)
-            {
-                in_array--;
-                if(in_array <= 0)
-                {
-                    if(!in_object)
-                    {
-                        info->values_end = curr_pos;
-                        break;
-                    }
-                }
-            }
-            continue;
-
-        case '}':
-            curr_pos++;
-            if(!in_quotes)
-            {
-                in_object--;
-                if(in_object <= 0)
-                {
-                    if(!in_array)
-                    {
-                        info->values_end = curr_pos;
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-
-         if(info->values_end > 0 ||
-            ( curr == ',' && !in_object && !in_array && !in_quotes ))
-        {
-             // in_object or in_array will have negative values if a whole object and / or array
-             // was extracted, so adjust for this
-             info->values_end = curr_pos + in_object + in_array;
-             curr_pos++;
-             break;
-        }
-        curr_pos++;
-    }
-
-    if(input[info->values_start] == '\"' && input[info->values_end-1] == '\"')
-    {
-        info->values_start++;
-        info->values_end--;
-    }
-    return curr_pos;
-}
-
