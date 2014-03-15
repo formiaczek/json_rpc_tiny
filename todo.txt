@@ -1,6 +1,0 @@
-NetworkDevice: void NetworkDevice::wait_for_dev_notif(std::string&)( =>return, 10.10.10.165, {"method": "device_removed"
-, "params": [{"dev_id": "\\?\HID#VID_244A&PID_0002#7&10797D25&0&0000#{4D1E55B2-F16F-11CF-88CB-001111000030}"}]})
-
-ConnectionManager: static char* ConnectionManager::rpc_handler_device_removed(rpc_request_info_t*)
-ConnectionManager: void ConnectionManager::device_disconnected(const string&)(\\?\HID#VID_244A&PID_0002#7&10797D25&0&000
-0#{4D1E55B2-F16F-11CF-88CB-001111000)
