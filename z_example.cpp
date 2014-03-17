@@ -242,7 +242,7 @@ const char* example_requests[] =
  "{\"method\": \"search\", \"params\": [{\"last_name\": \"Python\", \"age\": 26}], \"id\": 22}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_n\": \"Python\"}], \"id\": 43}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_name\": \"Doe\"}], \"id\": 54}",
- "{\"jsonrpc\": \"2.0\", \"thod\": \"search\", ", // not valid
+ "{\"jsonrpc\": \"2.0\", \"thod\": \"search\", ", // not valid, but not whole object, will not be parsed..
  "{\"method\": \"err_example\",  \"params\": [], \"id\": 36}", // not valid
  "{\"jsonrpc\": \"2.0\", \"method\": \"use_param\", \"params\": [], \"id\": 37s}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": 128, \"second\": 32, \"op\": \"+\"}], \"id\": 38}",
@@ -253,6 +253,7 @@ const char* example_requests[] =
  "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x17, \"second\": -17, \"op\": \"+\"}], \"id\": 43}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x32, \"second\": -055, \"op\": \"-\"}], \"id\": 44}",
  "{\"jsonrpc\": \"2.0\", \"method\": \"send_back\", \"params\": [{\"what\": \"{[{abcde}]}\"}], \"id\": 45}",
+ "{\"jsonrpc\": \"2.0\", \"thod\": \"search\".. }", // not valid, but a whole object, jsonrpc will be parsed..
 };
 const int num_of_examples = sizeof(example_requests)/sizeof(char*);
 
@@ -262,7 +263,7 @@ int main(int argc, char** argv)
 {
     rpc_handling_examples(argv); // examples on how tho register handlers, parse requests and responses.
 
-//    extracting_json_examples(); // examples on how to traverse (and extract all members of) a JSON object
+    extracting_json_examples(); // examples on how to traverse (and extract all members of) a JSON object
 
     return run_tests();  // sanity tests. Note that they depend on some examples defined above..
 }
@@ -434,7 +435,7 @@ void print_all_members_of_object(const std::string& input, int curr_pos, int obj
         std::cout << "next member is: ->";
         std::cout << input.substr(info.name_start, info.name_len);
         std::cout << "<- value (at: " << info.values_start << ", len: " << info.values_len << "): ";
-        std::cout << input.substr(info.values_start, info.values_len) << "\n";
+        std::cout << ">" << input.substr(info.values_start, info.values_len) << "<\n";
 
         if(json_next_member_is_object_or_list(input.c_str(), &info))
         {
@@ -516,6 +517,21 @@ int run_tests()
         TEST_COND_(extract_int_param(2, res_str) == 22); // "id": 22
         TEST_COND_(extract_str_param(3, res_str) == ""); // not existing.
 
+        res_str = handle_request_for_example(5, req_data, rpc);
+        TEST_COND_(res_str);
+        std::cout << "=====> " << extract_str_param("id", res_str);
+        TEST_COND_(extract_str_param("id", res_str) == "none"); // "id": none
+
+        std::string error = extract_str_param("error", res_str);
+        TEST_COND_(extract_int_param("code", error) == -32600);
+        TEST_COND_(extract_str_param("message", res_str) == "Invalid Request");
+
+        res_str = handle_request_for_example(16, req_data, rpc);
+        TEST_COND_(res_str);
+        TEST_COND_(extract_str_param("jsonrpc", res_str) == "2.0"); // "jsonrpc": "2.0"
+        error = extract_str_param("error", res_str);
+        TEST_COND_(extract_int_param("code", error) == -32600);
+
         res_str = handle_request_for_example(9, req_data, rpc);
         TEST_COND_(res_str);
         TEST_COND_(extract_int_param("res", res_str) == 32);
@@ -528,13 +544,19 @@ int run_tests()
 
         res_str = handle_request_for_example(11, req_data, rpc);
         TEST_COND_(res_str);
+        TEST_COND_(extract_str_param("jsonrpc", res_str) == "2.0");
         TEST_COND_(extract_int_param("first", res_str) == 128);
         TEST_COND_(extract_str_param("second", res_str) == "the string");
         TEST_COND_(extract_int_param("third", res_str) == 256);
 
         std::string expected = "{\"first\": 128, \"second\": \"the string\", \"third\": 256}";
-        TEST_COND_(extract_str_param(0, res_str) == expected); // the whole '0-param' part
-        TEST_COND_(extract_str_param(1, res_str) == "none"); // "error": none
+        TEST_COND_(extract_str_param(0, res_str) == "2.0");    // the whole '0-param' part
+        TEST_COND_(extract_str_param(1, res_str) == expected); // the whole '0-param' part
+        TEST_COND_(extract_int_param(2, res_str) == 41);   // "id": 41
+        // and result..
+        TEST_COND_(extract_int_param(0, expected) == 128);
+        TEST_COND_(extract_str_param(1, expected) == "the string");
+        TEST_COND_(extract_int_param(2, expected) == 256);
 
         // tests negative value extraction (hex/dec/oct) etc.
         res_str = handle_request_for_example(13, req_data, rpc);

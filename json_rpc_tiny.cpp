@@ -143,7 +143,10 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
     int fcn_id = -2;
 
     request_info.data = request_data;
-    *request_data->response = 0; // null
+    if(request_data->response && request_data->response_len)
+    {
+        *request_data->response = 0; // null
+    }
 
     next_r_pos = skip_all_of(request_data->request, 0, " \n\r\t", 0);
 
@@ -155,13 +158,17 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
     if(json_next_member_is_list(request_data->request, &next_req_token))
     {
         next_r_pos = skip_all_of(request_data->request, next_r_pos+1, " \n\r\t", 0);
-        append_str(request_data->response, "[");
+        if(request_data->response && request_data->response_len)
+        {
+            append_str(request_data->response, "[");
+        }
     }
 
     while(next_r_pos < request_data->request_len)
     {
         // reset some of the request info data
         request_info.id_start = -1;
+        request_info.info_flags = 0;
         fcn_id = -2;
         obj_id = -1;
 
@@ -193,7 +200,7 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
                 switch (obj_id)
                 {
                     case jsonrpc:
-                        if(str_are_equal(request_data->request + next_mem_token.values_start, "\"2.0\""))
+                        if(str_are_equal(request_data->request + next_mem_token.values_start, "2.0"))
                         {
                             request_info.info_flags |= rpc_request_is_rpc_20;
                         }
@@ -203,7 +210,7 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
                         fcn_id = get_fcn_id(self, request_data->request, &next_mem_token);
                         if(fcn_id >= 0)
                         {
-                            request_info.info_flags = rpc_request_is_notification; // assume it is notification
+                            request_info.info_flags |= rpc_request_is_notification; // assume it is notification
                         }
                         break;
 
@@ -217,7 +224,7 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
                            !str_are_equal(request_data->request + next_mem_token.values_start, "null"))
                         {
                             request_info.info_flags &= ~rpc_request_is_notification;
-                            request_info.id_start = next_mem_token.values_start; // mark start of the whole "id": ...
+                            request_info.id_start = next_mem_token.values_start;
                             request_info.id_len = next_mem_token.values_len;
                         }
                         break;
@@ -250,7 +257,8 @@ char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* reques
         }
     }
 
-    if(request_data->response[0] == '[')
+    if(request_data->response && request_data->response_len &&
+       request_data->response[0] == '[')
     {
         append_str(request_data->response+str_len(request_data->response), "]");
     }
@@ -294,7 +302,13 @@ int rpc_extract_param_int(int member_no_zero_based, int* result, rpc_request_inf
 
 char* json_rpc_create_result(const char* result_str, rpc_request_info_t* info)
 {
-    char* buf = info->data->response + str_len(info->data->response);
+    char* buf;
+    if(!info->data->response_len || !info->data->response) // if no space nor response, return..
+    {
+        return info->data->response;
+    }
+
+    buf = info->data->response + str_len(info->data->response);
     if(buf - info->data->response > 2) // not the beginning of a batch response
     {
         buf = append_str(buf, ", ", 2);
@@ -329,7 +343,13 @@ char* json_rpc_create_result(const char* result_str, rpc_request_info_t* info)
 
 char* json_rpc_create_error(int err, rpc_request_info_t* info)
 {
-    char* buf = info->data->response + str_len(info->data->response);
+    char* buf;
+    if(!info->data->response_len || !info->data->response) // if no space nor response, return..
+    {
+        return info->data->response;
+    }
+
+    buf = info->data->response + str_len(info->data->response);
     if(buf - info->data->response > 2) // not the beginning of a batch response
     {
         buf = append_str(buf, ", ", 2);
@@ -369,7 +389,13 @@ char* json_rpc_create_error(int err, rpc_request_info_t* info)
 
 char* json_rpc_create_error(const char* err_msg, rpc_request_info_t* info)
 {
-    char* buf = info->data->response + str_len(info->data->response);
+    char* buf;
+    if(!info->data->response_len || !info->data->response) // if no space nor response, return..
+    {
+        return info->data->response;
+    }
+
+    buf = info->data->response + str_len(info->data->response);
     if(buf - info->data->response > 2) // not the beginning of a batch response
     {
         buf = append_str(buf, ", ", 2);
@@ -426,7 +452,7 @@ int json_find_next_member(int start_from, const char* input, int input_len, stru
         return input_len;
     }
 
-    curr_pos = skip_all_of(input, curr_pos, " \n\t", 0);
+    curr_pos = skip_all_of(input, curr_pos, " \n\r\t", 0);
     if(curr_pos >= input_len)
     {
         return input_len;
@@ -619,7 +645,7 @@ static int json_find_member_value(int start_from, const char* input, struct json
     char curr;
     int values_end = 0;
 
-    curr_pos = skip_all_of(input, curr_pos, "\n\t :", 0); // whitespace & colon: we'll be searching for a value
+    curr_pos = skip_all_of(input, curr_pos, "\n\r\t :", 0); // whitespace & colon: we'll be searching for a value
     info->values_start = curr_pos;
 
     // find value(s) for this object
@@ -699,10 +725,11 @@ static int json_find_member_value(int start_from, const char* input, struct json
         info->values_start++;
         values_end--;
     }
-
-    info->values_start = skip_all_of(input, info->values_start, " \t\n\r", 0);
-    values_end = skip_all_of(input, values_end, " \t\n\r", 1);
-
+    else
+    {
+        info->values_start = skip_all_of(input, info->values_start, " \t\n\r", 0);
+        values_end = skip_all_of(input, values_end, " \t\n\r", 1);
+    }
 
     info->values_len = (values_end >= info->values_start) ? values_end - info->values_start : 0;
     return curr_pos;
