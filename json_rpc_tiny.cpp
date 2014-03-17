@@ -87,7 +87,7 @@ static const int num_of_obj_names = sizeof(obj_names)/sizeof(obj_names[0]);
 
 /* Private function declarations ------------------------------------------------------- */
 static int str_len(const char* str);
-static char* append_str(char* to, const char* from);
+static char* append_str(char* to, const char* from, int len = -1);
 static int str_are_equal(const char* first, const char* second_zero_ended);
 static int str_are_equal(const char* first, int first_len, const char* second_zero_ended);
 static int int_val(char symbol, int* result);
@@ -130,73 +130,129 @@ void json_rpc_register_handler(json_rpc_instance_t* self, const char* fcn_name, 
 char* json_rpc_handle_request(json_rpc_instance_t* self, json_rpc_data_t* request_data)
 {
     char* res = 0;
-    json_token_info_t token_info;
     rpc_request_info_t request_info;
+    json_token_info_t next_req_token;
+    json_token_info_t next_mem_token;
 
     int curr_pos = 0;
+    int next_r_pos = 0;
+
+    int next_req_max_pos = 0;
+
     int obj_id = -1;
     int fcn_id = -2;
 
-    request_info.info_flags = rpc_request_is_notification; // assume it is notification
-    request_info.id_start = -1;
     request_info.data = request_data;
+    *request_data->response = 0; // null
 
-    curr_pos = skip_all_of(request_data->request, curr_pos, "{", 0);
+    next_r_pos = skip_all_of(request_data->request, 0, " \n\r\t", 0);
 
-    while(curr_pos < request_data->request_len)
+    reset_token_info(&next_req_token);
+    next_req_token.values_start = next_r_pos;
+    next_req_token.values_len = request_data->request_len-next_r_pos;
+
+    // skip [] bracket for a batch..
+    if(json_next_member_is_list(request_data->request, &next_req_token))
     {
-        curr_pos = json_find_next_member(curr_pos, request_data->request, &token_info);
-        if (token_info.name_start > 0)
-        {
-            obj_id = get_obj_id(request_data->request, &token_info);
-            switch (obj_id)
-            {
-                case jsonrpc:
-                    if(str_are_equal(request_data->request + token_info.values_start, "\"2.0\""))
-                    {
-                        request_info.info_flags |= rpc_request_is_rpc_20;
-                    }
-                    break;
-
-                case method:
-                    fcn_id = get_fcn_id(self, request_data->request, &token_info);
-                    break;
-
-                case params:
-                    request_info.params_start = token_info.values_start;
-                    request_info.params_len = token_info.values_len;
-                    break;
-
-                case request_id:
-                    if(!str_are_equal(request_data->request + token_info.values_start, "none") &&
-                       !str_are_equal(request_data->request + token_info.values_start, "null"))
-                    {
-                        request_info.info_flags &= ~rpc_request_is_notification;
-                        request_info.id_start = token_info.name_start; // mark start of the whole "id": ...
-                    }
-                    break;
-            }
-        }
+        next_r_pos = skip_all_of(request_data->request, next_r_pos+1, " \n\r\t", 0);
+        append_str(request_data->response, "[");
     }
 
-    if(fcn_id < 0)
+    while(next_r_pos < request_data->request_len)
     {
-        if(fcn_id == -1)
+        // reset some of the request info data
+        request_info.id_start = -1;
+        fcn_id = -2;
+        obj_id = -1;
+
+
+        // extract next request (there can be a batch of them)
+        next_r_pos = json_find_next_member(next_r_pos, request_data->request, request_data->request_len, &next_req_token);
+        if(json_next_member_is_object(request_data->request, &next_req_token))
         {
-            res = json_rpc_create_error(json_rpc_err_method_not_found, &request_info);
+            curr_pos = next_req_token.values_start+1; // move past this next object
         }
         else
         {
+            curr_pos = next_req_token.values_start;
+        }
+
+        // skip the whitespace
+        curr_pos = skip_all_of(request_data->request, curr_pos, " \n\r\t", 0);
+
+        next_req_max_pos = next_req_token.values_start+next_req_token.values_len;
+        while(curr_pos < next_req_max_pos)
+        {
+            curr_pos = json_find_next_member(curr_pos,
+                                             request_data->request,
+                                             next_req_max_pos, &next_mem_token);
+
+            if (next_mem_token.name_start > 0)
+            {
+                obj_id = get_obj_id(request_data->request, &next_mem_token);
+                switch (obj_id)
+                {
+                    case jsonrpc:
+                        if(str_are_equal(request_data->request + next_mem_token.values_start, "\"2.0\""))
+                        {
+                            request_info.info_flags |= rpc_request_is_rpc_20;
+                        }
+                        break;
+
+                    case method:
+                        fcn_id = get_fcn_id(self, request_data->request, &next_mem_token);
+                        if(fcn_id >= 0)
+                        {
+                            request_info.info_flags = rpc_request_is_notification; // assume it is notification
+                        }
+                        break;
+
+                    case params:
+                        request_info.params_start = next_mem_token.values_start;
+                        request_info.params_len = next_mem_token.values_len;
+                        break;
+
+                    case request_id:
+                        if(!str_are_equal(request_data->request + next_mem_token.values_start, "none") &&
+                           !str_are_equal(request_data->request + next_mem_token.values_start, "null"))
+                        {
+                            request_info.info_flags &= ~rpc_request_is_notification;
+                            request_info.id_start = next_mem_token.values_start; // mark start of the whole "id": ...
+                            request_info.id_len = next_mem_token.values_len;
+                        }
+                        break;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if(fcn_id < 0)
+        {
+            if(fcn_id == -1)
+            {
+                res = json_rpc_create_error(json_rpc_err_method_not_found, &request_info);
+            }
+            else
+            {
+                res = json_rpc_create_error(json_rpc_err_invalid_request, &request_info);
+            }
+        }
+        else if(request_info.params_start < 0)
+        {
             res = json_rpc_create_error(json_rpc_err_invalid_request, &request_info);
         }
+        else
+        {
+            res = self->handlers[fcn_id].handler(&request_info); // everything OK, can call a handler
+        }
     }
-    else if(request_info.params_start < 0)
+
+    if(request_data->response[0] == '[')
     {
-        res = json_rpc_create_error(json_rpc_err_invalid_request, &request_info);
-    }
-    else
-    {
-        res = self->handlers[fcn_id].handler(&request_info); // everything OK, can call a handler
+        append_str(request_data->response+str_len(request_data->response), "]");
     }
 
     return res;
@@ -238,7 +294,12 @@ int rpc_extract_param_int(int member_no_zero_based, int* result, rpc_request_inf
 
 char* json_rpc_create_result(const char* result_str, rpc_request_info_t* info)
 {
-    char* buf = info->data->response;
+    char* buf = info->data->response + str_len(info->data->response);
+    if(buf - info->data->response > 2) // not the beginning of a batch response
+    {
+        buf = append_str(buf, ", ", 2);
+    }
+
     if(!(info->info_flags & rpc_request_is_notification))
     {
         if(info->info_flags & rpc_request_is_rpc_20)
@@ -258,21 +319,22 @@ char* json_rpc_create_result(const char* result_str, rpc_request_info_t* info)
         }
         if(info->id_start > 0)
         {
-            buf = append_str(buf, ", ");
-            buf = append_str(buf, info->data->request + info->id_start-1); // ID (with quotes) + rest of request
+            buf = append_str(buf, ", \"id\": ");
+            buf = append_str(buf, info->data->request + info->id_start, info->id_len);
         }
-        else
-        {
-            buf = append_str(buf, "}");
-        }
+        buf = append_str(buf, "}");
     }
-    *buf = 0; // end of response (note, that it will be 0-length for notification)
     return info->data->response;
 }
 
 char* json_rpc_create_error(int err, rpc_request_info_t* info)
 {
-    char* buf = info->data->response;
+    char* buf = info->data->response + str_len(info->data->response);
+    if(buf - info->data->response > 2) // not the beginning of a batch response
+    {
+        buf = append_str(buf, ", ", 2);
+    }
+
     if(!(info->info_flags & rpc_request_is_notification))
     {
         if(info->info_flags & rpc_request_is_rpc_20)
@@ -288,23 +350,31 @@ char* json_rpc_create_error(int err, rpc_request_info_t* info)
         buf = append_str(buf, ", \"message\": \"");
         buf = append_str(buf, json_rpc_err_codes[err].error_msg);
         buf = append_str(buf, "\"}");
-        if(info->id_start > 0)
+        if(info->id_start > 0 || err == json_rpc_err_invalid_request)
         {
-            buf = append_str(buf, ", ");
-            buf = append_str(buf, info->data->request + info->id_start); // the rest of request, which is ID
+            buf = append_str(buf, ", \"id\": ");
+            if(info->id_start > 0)
+            {
+                buf = append_str(buf, info->data->request + info->id_start, info->id_len);
+            }
+            else
+            {
+                buf = append_str(buf, "none");
+            }
         }
-        else
-        {
-            buf = append_str(buf, "}");
-        }
+        buf = append_str(buf, "}");
     }
-    *buf = 0; // end of response (note, that it will be 0-length for notification)
     return info->data->response;
 }
 
 char* json_rpc_create_error(const char* err_msg, rpc_request_info_t* info)
 {
-    char* buf = info->data->response;
+    char* buf = info->data->response + str_len(info->data->response);
+    if(buf - info->data->response > 2) // not the beginning of a batch response
+    {
+        buf = append_str(buf, ", ", 2);
+    }
+
     if(!(info->info_flags & rpc_request_is_notification))
     {
         if(info->info_flags & rpc_request_is_rpc_20)
@@ -319,15 +389,11 @@ char* json_rpc_create_error(const char* err_msg, rpc_request_info_t* info)
         buf = append_str(buf, err_msg);
         if(info->id_start > 0)
         {
-            buf = append_str(buf, ", ");
-            buf = append_str(buf, info->data->request + info->id_start); // the rest of request, which is ID
+            buf = append_str(buf, ", \"id\": ");
+            buf = append_str(buf, info->data->request + info->id_start, info->id_len);
         }
-        else
-        {
-            buf = append_str(buf, "}");
-        }
+        buf = append_str(buf, "}");
     }
-    *buf = 0; // end of response (note, that it will be 0-length for notification)
     return info->data->response;
 }
 
@@ -653,12 +719,23 @@ static int str_len(const char* str)
     return i;
 }
 
-static char* append_str(char* to, const char* from)
+static char* append_str(char* to, const char* from, int len/* = -1*/)
 {
-    while(*from)
+    if(len > 0)
     {
-        *to++ = *from++;
+        while(len--)
+        {
+            *to++ = *from++;
+        }
     }
+    else
+    {
+        while(*from)
+        {
+            *to++ = *from++;
+        }
+    }
+    *to = 0;
     return to;
 }
 

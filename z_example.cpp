@@ -237,23 +237,22 @@ char* send_back(rpc_request_info_t* info)
 // ====  example JSON RPC requests ==
 const char* example_requests[] =
 {
- "{\"jsonrpc\": \"2.0\", \"method\": \"getTimeDate\", \"params\": none, \"id\": 123}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"helloWorld\", \"params\": [\"Hello World\"], \"id\": 32}",
- "{\"method\": \"search\", \"params\": [{\"last_name\": \"Python\", \"age\": 26}], \"id\": 32}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_n\": \"Python\"}], \"id\": 33}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_name\": \"Doe\"}], \"id\": 34}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"getTimeDate\", \"params\": none, \"id\": 10}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"helloWorld\", \"params\": [\"Hello World\"], \"id\": 11}",
+ "{\"method\": \"search\", \"params\": [{\"last_name\": \"Python\", \"age\": 26}], \"id\": 22}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_n\": \"Python\"}], \"id\": 43}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"search\", \"params\": [{\"last_name\": \"Doe\"}], \"id\": 54}",
  "{\"jsonrpc\": \"2.0\", \"thod\": \"search\", ", // not valid
- "{\"method\": \"err_example\",  \"params\": [], \"id\": 35}", // not valid
- "{\"jsonrpc\": \"2.0\", \"method\": \"use_param\", \"params\": [], \"id\": 36s}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": 128, \"second\": 32, \"op\": \"+\"}], \"id\": 37}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"second\": 0x10, \"first\": 0x2, \"op\": \"*\"}], \"id\": 38}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": 128, \"second\": 32, \"op\": \"+\"}], \"id\": 39}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"ordered_params\", \"params\": [128, \"the string\", 0x100], \"id\": 40}",
+ "{\"method\": \"err_example\",  \"params\": [], \"id\": 36}", // not valid
+ "{\"jsonrpc\": \"2.0\", \"method\": \"use_param\", \"params\": [], \"id\": 37s}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": 128, \"second\": 32, \"op\": \"+\"}], \"id\": 38}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"second\": 0x10, \"first\": 0x2, \"op\": \"*\"}], \"id\": 39}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": 128, \"second\": 32, \"op\": \"+\"}], \"id\": 40}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"ordered_params\", \"params\": [128, \"the string\", 0x100], \"id\": 41}",
  "{\"method\": \"handleMessage\", \"params\": [\"user3\", \"sorry, gotta go now, ttyl\"], \"id\": null}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x17, \"second\": -17, \"op\": \"+\"}], \"id\": 41}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x32, \"second\": -055, \"op\": \"-\"}], \"id\": 42}",
- "{\"jsonrpc\": \"2.0\", \"method\": \"send_back\", \"params\": [{\"what\": \"{[{abcde}]}\"}], \"id\": 44}",
-
+ "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x17, \"second\": -17, \"op\": \"+\"}], \"id\": 43}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"calculate\", \"params\": [{\"first\": -0x32, \"second\": -055, \"op\": \"-\"}], \"id\": 44}",
+ "{\"jsonrpc\": \"2.0\", \"method\": \"send_back\", \"params\": [{\"what\": \"{[{abcde}]}\"}], \"id\": 45}",
 };
 const int num_of_examples = sizeof(example_requests)/sizeof(char*);
 
@@ -263,7 +262,7 @@ int main(int argc, char** argv)
 {
     rpc_handling_examples(argv); // examples on how tho register handlers, parse requests and responses.
 
-    extracting_json_examples(); // examples on how to traverse (and extract all members of) a JSON object
+//    extracting_json_examples(); // examples on how to traverse (and extract all members of) a JSON object
 
     return run_tests();  // sanity tests. Note that they depend on some examples defined above..
 }
@@ -273,7 +272,7 @@ int main(int argc, char** argv)
 #define MAX_NUM_OF_HANDLERS 32
 json_rpc_handler_t storage_for_handlers[MAX_NUM_OF_HANDLERS];
 
-#define RESPONSE_BUF_MAX_LEN  128
+#define RESPONSE_BUF_MAX_LEN  256
 char response_buffer[RESPONSE_BUF_MAX_LEN];
 
 void rpc_handling_examples(char** argv)
@@ -309,7 +308,7 @@ void rpc_handling_examples(char** argv)
         // and handle rpc request
         char* res_str = json_rpc_handle_request(&rpc, &req_data);
         std::cout << "\n" << i << ": " << "\n--> " << example_requests[i];
-        std::cout << "\n<-- " << res_str << "\n"; //json_rpc_handle_request(&rpc, &req);
+        std::cout << "\n<-- " << res_str << "\n";
 
         // try to extract response and print it (see extracting_json_examples() for more on extracting)
         if(res_str)
@@ -513,8 +512,8 @@ int run_tests()
         TEST_COND_(res_str);
         TEST_COND_(extract_str_param(0, res_str) == "Monty"); // "result": "Monty"
         TEST_COND_(extract_str_param(1, res_str) == "none"); // "error": none
-        TEST_COND_(extract_str_param(2, res_str) == "32"); // "id": 32
-        TEST_COND_(extract_int_param(2, res_str) == 32); // "id": 32
+        TEST_COND_(extract_str_param(2, res_str) == "22"); // "id": 22
+        TEST_COND_(extract_int_param(2, res_str) == 22); // "id": 22
         TEST_COND_(extract_str_param(3, res_str) == ""); // not existing.
 
         res_str = handle_request_for_example(9, req_data, rpc);
@@ -549,6 +548,54 @@ int run_tests()
         res_str = handle_request_for_example(15, req_data, rpc);
         TEST_COND_(res_str);
         TEST_COND_(extract_str_param("res", res_str) == "{[{abcde}]}"); // if value in quotes, do not treat it as JSON
+
+
+        // test batch requests..
+        std::string batch_request("[");
+        batch_request += example_requests[8];
+        batch_request += ",";
+        batch_request += example_requests[9];
+        batch_request += "]";
+
+        // prepare request buffer
+        req_data.request = batch_request.c_str();
+        req_data.request_len = batch_request.size();
+
+        // and handle rpc request
+        res_str = json_rpc_handle_request(&rpc, &req_data);
+        std::cout << "\nbatch request:\n--> " << batch_request << "\n";
+        std::cout << "\n<-- " << res_str << "\n";
+
+        TEST_COND_(res_str);
+        std::string batch_res = extract_str_param(0, res_str); // first batch item
+        TEST_COND_(extract_int_param("res", batch_res) == 160);
+        TEST_COND_(extract_str_param("operation", batch_res) == "+");
+        TEST_COND_(extract_int_param("id", batch_res) == 38);
+
+        batch_res = extract_str_param(1, res_str); // second batch item
+        TEST_COND_(extract_int_param("res", batch_res) == 32);
+        TEST_COND_(extract_str_param("operation", batch_res) == "*");
+        TEST_COND_(extract_int_param("id", batch_res) == 39);
+
+        batch_request = "[,233]"; // invalid requests in the batch..
+        // prepare request buffer
+        req_data.request = batch_request.c_str();
+        req_data.request_len = batch_request.size();
+
+        // and handle rpc request
+        res_str = json_rpc_handle_request(&rpc, &req_data);
+        std::cout << "\nbatch request:\n--> " << batch_request << "\n";
+        std::cout << "\n<-- " << res_str << "\n";
+
+        TEST_COND_(res_str);
+        batch_res = extract_str_param(0, res_str); // first batch item
+        TEST_COND_(extract_str_param("error", batch_res) == "{\"code\": -32600, \"message\": \"Invalid Request\"}");
+        TEST_COND_(extract_str_param("id", batch_res) == "none");
+
+        batch_res = extract_str_param(1, res_str); // second batch item
+        TEST_COND_(extract_str_param("error", batch_res) == "{\"code\": -32600, \"message\": \"Invalid Request\"}");
+        TEST_COND_(extract_str_param("id", batch_res) == "none");
+
 
         std::cout << "\n===== ALL TESTS PASSED =====\n\n";
     }

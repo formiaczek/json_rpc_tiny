@@ -61,6 +61,7 @@ typedef struct rpc_request_info
     int params_start;
     int params_len;
     int id_start;
+    int id_len;
     unsigned int info_flags;
     json_rpc_data_t* data;
 } rpc_request_info_t;
