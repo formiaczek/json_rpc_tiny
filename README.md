@@ -2,7 +2,7 @@ json_rpc_tiny
 =============
 
 Tiny json_rpc implementation for C and /C++ designed to be used also in on embedded systems.
-An incredibly simple (and simple to use), yet powerful library that implements rpc server functionality as well as all json-parsing futures potentially needed by programs using JSON.
+An incredibly simple (and simple to use), yet powerful library that implements rpc server functionality as well as all json-parsing features potentially needed by programs using JSON.
 
 The main design goal was to create a library that does not allocate any memory and does not need stdlib functions - to allow using it on a 'bare-metal' micro-controller systems as well as on standard and more powerfull and not memory-constraint systems. This is really what makes it different from existing C limplementations for JSON and JSON-RPC libraries.
 
